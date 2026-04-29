@@ -1,0 +1,43 @@
+version: '3'
+
+vars:
+  CGO_ENABLED: "0"
+
+tasks:
+  default:
+    desc: Build everything
+    deps: [build]
+
+  build:
+    desc: Build all packages
+    cmds:
+      - CGO_ENABLED={{.CGO_ENABLED}} go build ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - CGO_ENABLED={{.CGO_ENABLED}} go vet ./...
+
+  shaders:
+    desc: Compile GLSL shaders to SPIR-V
+    sources:
+      - cmd/triangletest/shader/triangle.vert
+      - cmd/triangletest/shader/triangle.frag
+    generates:
+      - cmd/triangletest/shader/vert.spv
+      - cmd/triangletest/shader/frag.spv
+    cmds:
+      - glslc cmd/triangletest/shader/triangle.vert -o cmd/triangletest/shader/vert.spv
+      - glslc cmd/triangletest/shader/triangle.frag -o cmd/triangletest/shader/frag.spv
+
+  surface-test:
+    desc: Run the 200ms surface creation test
+    deps: [build]
+    cmds:
+      - CGO_ENABLED={{.CGO_ENABLED}} go run ./cmd/surfacetest
+
+  triangle-test:
+    desc: Compile shaders and run the Vulkan triangle demo
+    deps: [shaders]
+    cmds:
+      - CGO_ENABLED={{.CGO_ENABLED}} go run ./cmd/triangletest

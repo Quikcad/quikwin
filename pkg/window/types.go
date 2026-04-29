@@ -1,139 +1,131 @@
 package window
 
-type Key uint32
+import "github.com/Quikcad/quikwin/internal/wtypes"
 
-const (
-	KeyUnknown Key = iota
-	KeySpace
-	KeyApostrophe
-	KeyComma
-	KeyMinus
-	KeyPeriod
-	KeySlash
-	Key0
-	Key1
-	Key2
-	Key3
-	Key4
-	Key5
-	Key6
-	Key7
-	Key8
-	Key9
-	KeySemicolon
-	KeyEqual
-	KeyA
-	KeyB
-	KeyC
-	KeyD
-	KeyE
-	KeyF
-	KeyG
-	KeyH
-	KeyI
-	KeyJ
-	KeyK
-	KeyL
-	KeyM
-	KeyN
-	KeyO
-	KeyP
-	KeyQ
-	KeyR
-	KeyS
-	KeyT
-	KeyU
-	KeyV
-	KeyW
-	KeyX
-	KeyY
-	KeyZ
-	KeyLeftBracket
-	KeyBackslash
-	KeyRightBracket
-	KeyGraveAccent
-	KeyEscape
-	KeyEnter
-	KeyTab
-	KeyBackspace
-	KeyInsert
-	KeyDelete
-	KeyRight
-	KeyLeft
-	KeyDown
-	KeyUp
-	KeyPageUp
-	KeyPageDown
-	KeyHome
-	KeyEnd
-	KeyCapsLock
-	KeyScrollLock
-	KeyNumLock
-	KeyPrintScreen
-	KeyPause
-	KeyF1
-	KeyF2
-	KeyF3
-	KeyF4
-	KeyF5
-	KeyF6
-	KeyF7
-	KeyF8
-	KeyF9
-	KeyF10
-	KeyF11
-	KeyF12
-	KeyLeftShift
-	KeyLeftControl
-	KeyLeftAlt
-	KeyLeftSuper
-	KeyRightShift
-	KeyRightControl
-	KeyRightAlt
-	KeyRightSuper
-	KeyMenu
+type (
+	Key         = wtypes.Key
+	Action      = wtypes.Action
+	Mod         = wtypes.Mod
+	Button      = wtypes.Button
+	CursorShape = wtypes.CursorShape
 )
 
-type Action uint8
-
 const (
-	Release Action = iota
-	Press
-	Repeat
-)
+	KeyUnknown      = wtypes.KeyUnknown
+	KeySpace        = wtypes.KeySpace
+	KeyApostrophe   = wtypes.KeyApostrophe
+	KeyComma        = wtypes.KeyComma
+	KeyMinus        = wtypes.KeyMinus
+	KeyPeriod       = wtypes.KeyPeriod
+	KeySlash        = wtypes.KeySlash
+	Key0            = wtypes.Key0
+	Key1            = wtypes.Key1
+	Key2            = wtypes.Key2
+	Key3            = wtypes.Key3
+	Key4            = wtypes.Key4
+	Key5            = wtypes.Key5
+	Key6            = wtypes.Key6
+	Key7            = wtypes.Key7
+	Key8            = wtypes.Key8
+	Key9            = wtypes.Key9
+	KeySemicolon    = wtypes.KeySemicolon
+	KeyEqual        = wtypes.KeyEqual
+	KeyA            = wtypes.KeyA
+	KeyB            = wtypes.KeyB
+	KeyC            = wtypes.KeyC
+	KeyD            = wtypes.KeyD
+	KeyE            = wtypes.KeyE
+	KeyF            = wtypes.KeyF
+	KeyG            = wtypes.KeyG
+	KeyH            = wtypes.KeyH
+	KeyI            = wtypes.KeyI
+	KeyJ            = wtypes.KeyJ
+	KeyK            = wtypes.KeyK
+	KeyL            = wtypes.KeyL
+	KeyM            = wtypes.KeyM
+	KeyN            = wtypes.KeyN
+	KeyO            = wtypes.KeyO
+	KeyP            = wtypes.KeyP
+	KeyQ            = wtypes.KeyQ
+	KeyR            = wtypes.KeyR
+	KeyS            = wtypes.KeyS
+	KeyT            = wtypes.KeyT
+	KeyU            = wtypes.KeyU
+	KeyV            = wtypes.KeyV
+	KeyW            = wtypes.KeyW
+	KeyX            = wtypes.KeyX
+	KeyY            = wtypes.KeyY
+	KeyZ            = wtypes.KeyZ
+	KeyLeftBracket  = wtypes.KeyLeftBracket
+	KeyBackslash    = wtypes.KeyBackslash
+	KeyRightBracket = wtypes.KeyRightBracket
+	KeyGraveAccent  = wtypes.KeyGraveAccent
+	KeyEscape       = wtypes.KeyEscape
+	KeyEnter        = wtypes.KeyEnter
+	KeyTab          = wtypes.KeyTab
+	KeyBackspace    = wtypes.KeyBackspace
+	KeyInsert       = wtypes.KeyInsert
+	KeyDelete       = wtypes.KeyDelete
+	KeyRight        = wtypes.KeyRight
+	KeyLeft         = wtypes.KeyLeft
+	KeyDown         = wtypes.KeyDown
+	KeyUp           = wtypes.KeyUp
+	KeyPageUp       = wtypes.KeyPageUp
+	KeyPageDown     = wtypes.KeyPageDown
+	KeyHome         = wtypes.KeyHome
+	KeyEnd          = wtypes.KeyEnd
+	KeyCapsLock     = wtypes.KeyCapsLock
+	KeyScrollLock   = wtypes.KeyScrollLock
+	KeyNumLock      = wtypes.KeyNumLock
+	KeyPrintScreen  = wtypes.KeyPrintScreen
+	KeyPause        = wtypes.KeyPause
+	KeyF1           = wtypes.KeyF1
+	KeyF2           = wtypes.KeyF2
+	KeyF3           = wtypes.KeyF3
+	KeyF4           = wtypes.KeyF4
+	KeyF5           = wtypes.KeyF5
+	KeyF6           = wtypes.KeyF6
+	KeyF7           = wtypes.KeyF7
+	KeyF8           = wtypes.KeyF8
+	KeyF9           = wtypes.KeyF9
+	KeyF10          = wtypes.KeyF10
+	KeyF11          = wtypes.KeyF11
+	KeyF12          = wtypes.KeyF12
+	KeyLeftShift    = wtypes.KeyLeftShift
+	KeyLeftControl  = wtypes.KeyLeftControl
+	KeyLeftAlt      = wtypes.KeyLeftAlt
+	KeyLeftSuper    = wtypes.KeyLeftSuper
+	KeyRightShift   = wtypes.KeyRightShift
+	KeyRightControl = wtypes.KeyRightControl
+	KeyRightAlt     = wtypes.KeyRightAlt
+	KeyRightSuper   = wtypes.KeyRightSuper
+	KeyMenu         = wtypes.KeyMenu
 
-type Mod uint8
+	Release = wtypes.Release
+	Press   = wtypes.Press
+	Repeat  = wtypes.Repeat
 
-const (
-	ModShift   Mod = 1 << iota
-	ModControl
-	ModAlt
-	ModSuper
-	ModCapsLock
-	ModNumLock
-)
+	ModShift    = wtypes.ModShift
+	ModControl  = wtypes.ModControl
+	ModAlt      = wtypes.ModAlt
+	ModSuper    = wtypes.ModSuper
+	ModCapsLock = wtypes.ModCapsLock
+	ModNumLock  = wtypes.ModNumLock
 
-type Button uint8
+	ButtonLeft   = wtypes.ButtonLeft
+	ButtonRight  = wtypes.ButtonRight
+	ButtonMiddle = wtypes.ButtonMiddle
+	Button4      = wtypes.Button4
+	Button5      = wtypes.Button5
 
-const (
-	ButtonLeft Button = iota
-	ButtonRight
-	ButtonMiddle
-	Button4
-	Button5
-)
-
-type CursorShape uint8
-
-const (
-	CursorArrow CursorShape = iota
-	CursorIBeam
-	CursorCrosshair
-	CursorHand
-	CursorHResize
-	CursorVResize
-	CursorNWSEResize
-	CursorNESWResize
-	CursorAllResize
-	CursorNotAllowed
+	CursorArrow      = wtypes.CursorArrow
+	CursorIBeam      = wtypes.CursorIBeam
+	CursorCrosshair  = wtypes.CursorCrosshair
+	CursorHand       = wtypes.CursorHand
+	CursorHResize    = wtypes.CursorHResize
+	CursorVResize    = wtypes.CursorVResize
+	CursorNWSEResize = wtypes.CursorNWSEResize
+	CursorNESWResize = wtypes.CursorNESWResize
+	CursorAllResize  = wtypes.CursorAllResize
+	CursorNotAllowed = wtypes.CursorNotAllowed
 )
