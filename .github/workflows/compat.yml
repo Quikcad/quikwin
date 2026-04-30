@@ -1,0 +1,33 @@
+name: vulkan-go compat
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build (latest vulkan-go)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: update vulkan-go to latest
+        run: |
+          CGO_ENABLED=0 go get github.com/lukem570/vulkan-go
+          CGO_ENABLED=0 go mod tidy
+
+      - name: build
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: vet
+        run: CGO_ENABLED=0 go vet ./...
