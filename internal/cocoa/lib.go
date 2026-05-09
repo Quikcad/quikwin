@@ -4,6 +4,7 @@ package cocoa
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"unsafe"
 
@@ -127,7 +128,6 @@ func loadSymbols() error {
 	}
 	for _, p := range []pair{
 		{&_objcMsgSend, o, "objc_msgSend"},
-		{&_objcMsgSendFpret, o, "objc_msgSend_fpret"},
 		{&_selRegisterName, o, "sel_registerName"},
 		{&_objcGetClass, o, "objc_getClass"},
 		{&_objcAllocateClassPair, o, "objc_allocateClassPair"},
@@ -138,6 +138,17 @@ func loadSymbols() error {
 	} {
 		var err error
 		if *p.dst, err = p.fn(p.name); err != nil {
+			return err
+		}
+	}
+	// objc_msgSend_fpret exists only on x86_64; arm64 routes all return
+	// types including float through objc_msgSend. Alias so call sites that
+	// reference _objcMsgSendFpret work on both architectures.
+	if runtime.GOARCH == "arm64" {
+		_objcMsgSendFpret = _objcMsgSend
+	} else {
+		var err error
+		if _objcMsgSendFpret, err = o("objc_msgSend_fpret"); err != nil {
 			return err
 		}
 	}
