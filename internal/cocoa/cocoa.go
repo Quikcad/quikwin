@@ -59,6 +59,7 @@ var (
 	selSetTitleVisibility             unsafe.Pointer
 	selStandardWindowButton           unsafe.Pointer
 	selSetFrameOrigin                 unsafe.Pointer
+	selSetLayer                       unsafe.Pointer
 
 	selsOnce sync.Once
 )
@@ -69,7 +70,7 @@ func initSels() {
 			p := bstr(name)
 			var r unsafe.Pointer
 			ffi.CallFunction(&cifSelRegister, _selRegisterName, unsafe.Pointer(&r),
-				[]unsafe.Pointer{unsafe.Pointer(p)})
+				[]unsafe.Pointer{unsafe.Pointer(&p)})
 			return r
 		}
 		selInit = reg("init")
@@ -112,6 +113,7 @@ func initSels() {
 		selSetTitleVisibility = reg("setTitleVisibility:")
 		selStandardWindowButton = reg("standardWindowButton:")
 		selSetFrameOrigin = reg("setFrameOrigin:")
+		selSetLayer = reg("setLayer:")
 	})
 }
 
@@ -128,43 +130,43 @@ func bstr(s string) *byte {
 func msgSend0(recv, sel unsafe.Pointer) unsafe.Pointer {
 	var ret unsafe.Pointer
 	ffi.CallFunction(&cifMsg0, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{recv, sel})
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
 	return ret
 }
 
 func msgSend1p(recv, sel, arg unsafe.Pointer) unsafe.Pointer {
 	var ret unsafe.Pointer
 	ffi.CallFunction(&cifMsg1p, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{recv, sel, arg})
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&arg)})
 	return ret
 }
 
 func msgSend1pVoid(recv, sel, arg unsafe.Pointer) {
 	ffi.CallFunction(&cifMsg1pVoid, _objcMsgSend, nil,
-		[]unsafe.Pointer{recv, sel, arg})
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&arg)})
 }
 
 func msgSend1iVoid(recv, sel unsafe.Pointer, v int64) {
 	ffi.CallFunction(&cifMsg1iVoid, _objcMsgSend, nil,
-		[]unsafe.Pointer{recv, sel, unsafe.Pointer(&v)})
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&v)})
 }
 
 func msgSend1bVoid(recv, sel unsafe.Pointer, v int32) {
 	ffi.CallFunction(&cifMsg1bVoid, _objcMsgSend, nil,
-		[]unsafe.Pointer{recv, sel, unsafe.Pointer(&v)})
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&v)})
 }
 
 func msgSend0i(recv, sel unsafe.Pointer) int64 {
 	var ret int64
 	ffi.CallFunction(&cifMsg0i, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{recv, sel})
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
 	return ret
 }
 
 func msgSend0u(recv, sel unsafe.Pointer) uint64 {
 	var ret uint64
 	ffi.CallFunction(&cifMsg0u, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{recv, sel})
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
 	return ret
 }
 
@@ -173,19 +175,19 @@ func msgSend0f(recv, sel unsafe.Pointer) float64 {
 	// arm64: plain objc_msgSend; x86_64: double returned in XMM0, libffi reads
 	// it correctly with DoubleType return descriptor.
 	ffi.CallFunction(&cifMsg0f, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{recv, sel})
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
 	return ret
 }
 
 func msgSend2fVoid(recv, sel unsafe.Pointer, x, y float64) {
 	ffi.CallFunction(&cifMsg2fVoid, _objcMsgSend, nil,
-		[]unsafe.Pointer{recv, sel, unsafe.Pointer(&x), unsafe.Pointer(&y)})
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&x), unsafe.Pointer(&y)})
 }
 
 func msgSendInitWindow(recv, sel unsafe.Pointer, x, y, w, h float64, style, backing uint64, deferred int32) unsafe.Pointer {
 	var ret unsafe.Pointer
 	ffi.CallFunction(&cifMsgInitWindow, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{recv, sel,
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel),
 			unsafe.Pointer(&x), unsafe.Pointer(&y), unsafe.Pointer(&w), unsafe.Pointer(&h),
 			unsafe.Pointer(&style), unsafe.Pointer(&backing), unsafe.Pointer(&deferred)})
 	return ret
@@ -201,7 +203,7 @@ func getClass(name string) unsafe.Pointer {
 	p := bstr(name)
 	var ret unsafe.Pointer
 	ffi.CallFunction(&cifGetClass, _objcGetClass, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{unsafe.Pointer(p)})
+		[]unsafe.Pointer{unsafe.Pointer(&p)})
 	return ret
 }
 
@@ -220,10 +222,10 @@ func initApp() {
 		nsApp = msgSend0(cls, selSharedApplication)
 		var policy int64 // NSApplicationActivationPolicyRegular = 0
 		ffi.CallFunction(&cifMsg1iVoid, _objcMsgSend, nil,
-			[]unsafe.Pointer{nsApp, selSetActivationPolicy, unsafe.Pointer(&policy)})
+			[]unsafe.Pointer{unsafe.Pointer(&nsApp), unsafe.Pointer(&selSetActivationPolicy), unsafe.Pointer(&policy)})
 		var yes int32 = 1
 		ffi.CallFunction(&cifMsg1bVoid, _objcMsgSend, nil,
-			[]unsafe.Pointer{nsApp, selActivateIgnoringOtherApps, unsafe.Pointer(&yes)})
+			[]unsafe.Pointer{unsafe.Pointer(&nsApp), unsafe.Pointer(&selActivateIgnoringOtherApps), unsafe.Pointer(&yes)})
 	})
 }
 
@@ -264,7 +266,7 @@ func initDelegateClass() {
 		className := bstr("QuikwinWindowDelegate")
 		var extraBytes uint64
 		ffi.CallFunction(&cifAllocClassPair, _objcAllocateClassPair, unsafe.Pointer(&delegateClass),
-			[]unsafe.Pointer{superCls, unsafe.Pointer(className), unsafe.Pointer(&extraBytes)})
+			[]unsafe.Pointer{unsafe.Pointer(&superCls), unsafe.Pointer(&className), unsafe.Pointer(&extraBytes)})
 
 		addMethod("windowWillClose:", "v@:@", func(self, _cmd, notif uintptr) {
 			if w := lookupDelegate(unsafe.Pointer(self)); w != nil {
@@ -300,7 +302,7 @@ func initDelegateClass() {
 		})
 
 		ffi.CallFunction(&cifRegisterClassPair, _objcRegisterClassPair, nil,
-			[]unsafe.Pointer{delegateClass})
+			[]unsafe.Pointer{unsafe.Pointer(&delegateClass)})
 	})
 }
 
@@ -310,12 +312,12 @@ func addMethod(selName, typeStr string, fn any) {
 	sel := bstr(selName)
 	var selPtr unsafe.Pointer
 	ffi.CallFunction(&cifSelRegister, _selRegisterName, unsafe.Pointer(&selPtr),
-		[]unsafe.Pointer{unsafe.Pointer(sel)})
+		[]unsafe.Pointer{unsafe.Pointer(&sel)})
 
 	imp := unsafe.Pointer(ffi.NewCallback(fn))
 	ts := bstr(typeStr)
 	ffi.CallFunction(&cifClassAddMethod, _classAddMethod, nil,
-		[]unsafe.Pointer{delegateClass, selPtr, imp, unsafe.Pointer(ts)})
+		[]unsafe.Pointer{unsafe.Pointer(&delegateClass), unsafe.Pointer(&selPtr), unsafe.Pointer(&imp), unsafe.Pointer(&ts)})
 }
 
 // ---------------------------------------------------------------------------
@@ -489,9 +491,10 @@ func modFlagsToMod(flags uint64) wtypes.Mod {
 // ---------------------------------------------------------------------------
 
 type window struct {
-	nswin    unsafe.Pointer
-	delegate unsafe.Pointer
-	view     unsafe.Pointer
+	nswin      unsafe.Pointer
+	delegate   unsafe.Pointer
+	view       unsafe.Pointer
+	metalLayer unsafe.Pointer // CAMetalLayer backing the view; set in New
 
 	width, height uint32
 	scale         float32
@@ -544,6 +547,21 @@ func New(title string, width, height, minW, minH uint32) (*window, error) {
 	}
 
 	view := msgSend0(nswin, selContentView)
+	// Create a CAMetalLayer and attach it as the view's backing layer before
+	// calling setWantsLayer:YES. This gives MoltenVK a concrete Metal layer to
+	// use when creating a VkSurfaceKHR via VK_EXT_metal_surface. If we only
+	// call setWantsLayer:YES the view gets a plain CALayer which MoltenVK
+	// cannot use and vkGetPhysicalDeviceSurfaceCapabilitiesKHR returns
+	// VK_ERROR_SURFACE_LOST_KHR.
+	metalLayerCls := getClass("CAMetalLayer")
+	metalLayer := msgSend0(metalLayerCls, selLayer) // [CAMetalLayer layer]
+	if metalLayer == nil {
+		// Fallback: alloc+init if the class method is unavailable.
+		metalLayer = msgSend0(msgSend0(metalLayerCls, selAlloc), selInit)
+	}
+	if metalLayer != nil {
+		msgSend1pVoid(view, selSetLayer, metalLayer) // [view setLayer:metalLayer]
+	}
 	msgSend1bVoid(view, selSetWantsLayer, 1)
 
 	screen := msgSend0(getClass("NSScreen"), selMainScreen)
@@ -553,12 +571,13 @@ func New(title string, width, height, minW, minH uint32) (*window, error) {
 	}
 
 	w := &window{
-		nswin:     nswin,
-		view:      view,
-		width:     width,
-		height:    height,
-		scale:     scale,
-		styleMask: style,
+		nswin:      nswin,
+		view:       view,
+		metalLayer: metalLayer,
+		width:      width,
+		height:     height,
+		scale:      scale,
+		styleMask:  style,
 	}
 
 	del := msgSend0(msgSend0(delegateClass, selAlloc), selInit)
@@ -587,8 +606,8 @@ func (w *window) PollEvents() {
 	for {
 		var event unsafe.Pointer
 		ffi.CallFunction(&cifNextEvent, _objcMsgSend, unsafe.Pointer(&event),
-			[]unsafe.Pointer{nsApp, selNextEventMatchingMask,
-				unsafe.Pointer(&mask), distantPast, mode, unsafe.Pointer(&dequeue)})
+			[]unsafe.Pointer{unsafe.Pointer(&nsApp), unsafe.Pointer(&selNextEventMatchingMask),
+				unsafe.Pointer(&mask), unsafe.Pointer(&distantPast), unsafe.Pointer(&mode), unsafe.Pointer(&dequeue)})
 		if event == nil {
 			break
 		}
@@ -829,12 +848,20 @@ func (w *window) SetMenuBar(_ []any) {}
 // ---------------------------------------------------------------------------
 
 func (w *window) NewSurface(instance vk.Instance) (*vk.SurfaceKHR, error) {
-	layer := msgSend0(w.view, selLayer)
-	if layer == nil {
-		return nil, fmt.Errorf("quikwin/cocoa: no CAMetalLayer on contentView")
+	// Prefer VK_EXT_metal_surface (CreateMetalSurfaceEXT) over the deprecated
+	// VK_MVK_macos_surface. The EXT variant takes a CAMetalLayer* directly,
+	// which we set up in New(); newer MoltenVK versions return
+	// ErrorSurfaceLostKHR from GetSurfaceCapabilitiesKHR when given a surface
+	// created via the legacy MVK extension.
+	if w.metalLayer != nil {
+		info := vk.MetalSurfaceCreateInfoEXT{
+			Layer: w.metalLayer,
+		}
+		return instance.CreateMetalSurfaceEXT(&info, nil)
 	}
+	// Fallback for the rare case where CAMetalLayer setup failed.
 	info := vk.MacOSSurfaceCreateInfoMVK{
-		View: layer,
+		View: w.view,
 	}
 	return instance.CreateMacOSSurfaceMVK(&info, nil)
 }

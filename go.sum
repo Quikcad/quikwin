@@ -1,4 +1,4 @@
 github.com/go-webgpu/goffi v0.5.0 h1:EuvVRiRn9qAfCkYYXbHs9gz8NY+zv2/OA1N7gi56UVE=
 github.com/go-webgpu/goffi v0.5.0/go.mod h1:wfoxNsJkU+5RFbV1kNN1kunhc1lFHuJKK3zpgx08/uM=
-github.com/lukem570/vulkan-go v1.4.350-0.20260429123833-af286d63eb40 h1:Suedxu0X+oKEU321yrogHrgmSE1ED9hISg4U6tM2bXc=
-github.com/lukem570/vulkan-go v1.4.350-0.20260429123833-af286d63eb40/go.mod h1:f2kZgWI4IOdAgKiwWT/yVVMo5WwuSUay/+LQtkF391Q=
+github.com/lukem570/vulkan-go v1.4.352-0.20260509060031-79c0382f8653 h1:KZxc6tUJDDJw6Sb11YOFvE8jdRCzYUy/9O95uAVb9FY=
+github.com/lukem570/vulkan-go v1.4.352-0.20260509060031-79c0382f8653/go.mod h1:f2kZgWI4IOdAgKiwWT/yVVMo5WwuSUay/+LQtkF391Q=
