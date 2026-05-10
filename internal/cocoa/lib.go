@@ -55,6 +55,8 @@ var (
 	cifMsg1bReti types.CallInterface
 	// (id, SEL, f64, f64, f64, f64, u64, u64, i32) → id  (initWithContentRect:styleMask:backing:defer:)
 	cifMsgInitWindow types.CallInterface
+	// (id, SEL, f64) → void  (setContentsScale:)
+	cifMsg1fVoid types.CallInterface
 	// (id, SEL, f64, f64) → void  (setMinSize:, setMaxSize:, setContentSize:)
 	cifMsg2fVoid types.CallInterface
 	// objc_setAssociatedObject(id, key, value, policy) → void
@@ -191,6 +193,8 @@ func prepareCIFs() error {
 		// initWithContentRect:styleMask:backing:defer:
 		// CGRect = (x f64, y f64, w f64, h f64), styleMask u64, backing u64, defer i32 → id
 		{&cifMsgInitWindow, _ptr, []*types.TypeDescriptor{_ptr, _ptr, _f64, _f64, _f64, _f64, _u64, _u64, _i32}},
+		// setContentsScale: takes CGFloat (f64)
+		{&cifMsg1fVoid, _void, []*types.TypeDescriptor{_ptr, _ptr, _f64}},
 		// setMinSize:/setMaxSize: take NSSize = (w f64, h f64)
 		{&cifMsg2fVoid, _void, []*types.TypeDescriptor{_ptr, _ptr, _f64, _f64}},
 		// objc_setAssociatedObject(id, key*, value, policy u64) → void

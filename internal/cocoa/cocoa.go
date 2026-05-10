@@ -60,6 +60,7 @@ var (
 	selStandardWindowButton           unsafe.Pointer
 	selSetFrameOrigin                 unsafe.Pointer
 	selSetLayer                       unsafe.Pointer
+	selSetContentsScale               unsafe.Pointer
 
 	selsOnce sync.Once
 )
@@ -114,6 +115,7 @@ func initSels() {
 		selStandardWindowButton = reg("standardWindowButton:")
 		selSetFrameOrigin = reg("setFrameOrigin:")
 		selSetLayer = reg("setLayer:")
+		selSetContentsScale = reg("setContentsScale:")
 	})
 }
 
@@ -177,6 +179,11 @@ func msgSend0f(recv, sel unsafe.Pointer) float64 {
 	ffi.CallFunction(&cifMsg0f, _objcMsgSend, unsafe.Pointer(&ret),
 		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
 	return ret
+}
+
+func msgSend1fVoid(recv, sel unsafe.Pointer, v float64) {
+	ffi.CallFunction(&cifMsg1fVoid, _objcMsgSend, nil,
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&v)})
 }
 
 func msgSend2fVoid(recv, sel unsafe.Pointer, x, y float64) {
@@ -568,6 +575,13 @@ func New(title string, width, height, minW, minH uint32) (*window, error) {
 	scale := float32(1.0)
 	if screen != nil {
 		scale = float32(msgSend0f(screen, selBackingScaleFactor))
+	}
+	// Set contentsScale on the Metal layer so the drawable size matches
+	// physical pixels. Without this it defaults to 1.0 and every drawable
+	// pixel maps to backingScaleFactor display pixels, making all content
+	// look scale-factor× too large on Retina displays.
+	if metalLayer != nil && scale > 0 {
+		msgSend1fVoid(metalLayer, selSetContentsScale, float64(scale))
 	}
 
 	w := &window{
