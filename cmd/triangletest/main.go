@@ -662,11 +662,11 @@ func (a *triApp) destroy() {
 func platformExts(win window.Window) []string {
 	exts := []string{"VK_KHR_surface"}
 	switch {
-	case hasMethod[interface{ WlDisplay() (uintptr, error) }](win):
+	case hasMethod[interface{ WlDisplay() uintptr }](win):
 		exts = append(exts, "VK_KHR_wayland_surface")
-	case hasMethod[interface{ Display() (uintptr, error) }](win):
+	case hasMethod[interface{ Display() uintptr }](win):
 		exts = append(exts, "VK_KHR_xlib_surface")
-	case hasMethod[interface{ HWND() (uintptr, error) }](win):
+	case hasMethod[interface{ HWND() uintptr }](win):
 		exts = append(exts, "VK_KHR_win32_surface")
 	}
 	return exts

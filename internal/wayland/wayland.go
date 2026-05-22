@@ -12,12 +12,17 @@ import (
 	"github.com/Quikcad/quikwin/internal/wtypes"
 	"github.com/go-webgpu/goffi/ffi"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
+	wl "github.com/lukem570/wayland-go/pkg/wayland"
+	cursorproto "github.com/lukem570/wayland-go/pkg/protocols/staging/cursorshapev1"
+	xdg "github.com/lukem570/wayland-go/pkg/protocols/stable/xdgshell"
+	xdgdeco "github.com/lukem570/wayland-go/pkg/protocols/unstable/xdgdecorationunstablev1"
+	"github.com/lukem570/wayland-go/pkg/wire"
 )
 
 type window struct {
 	mu sync.Mutex
 
-	// Wayland core objects
+	// libwayland-client objects (unsafe.Pointer for Vulkan interop)
 	display     unsafe.Pointer // wl_display*
 	registry    unsafe.Pointer // wl_registry*
 	compositor  unsafe.Pointer // wl_compositor*
@@ -28,18 +33,21 @@ type window struct {
 	seat        unsafe.Pointer // wl_seat*
 	keyboard    unsafe.Pointer // wl_keyboard*
 	pointer     unsafe.Pointer // wl_pointer*
-	decorMgr    unsafe.Pointer // zxdg_decoration_manager_v1* (optional)
-	toplevelDecor unsafe.Pointer // zxdg_toplevel_decoration_v1* (optional)
+	decorMgr    unsafe.Pointer // zxdg_decoration_manager_v1*
+	toplevelDecor unsafe.Pointer // zxdg_toplevel_decoration_v1*
+
+	// Cursor shape via wayland-go (uses its own wire.Conn)
+	cursorConn *wire.Conn
+	cursorMgr  *cursorproto.ManagerV1
+	cursorDev  *cursorproto.DeviceV1
 
 	// XKB keyboard state
-	xkbCtx    unsafe.Pointer // xkb_context*
-	xkbKeymap unsafe.Pointer // xkb_keymap*
-	xkbState  unsafe.Pointer // xkb_state*
+	xkbCtx    unsafe.Pointer
+	xkbKeymap unsafe.Pointer
+	xkbState  unsafe.Pointer
 
-	// Globals registry data (name → version, filled in by registry.global callback)
 	globals map[string]globalEntry
 
-	// Pending configure serial (must be ack'd before first commit)
 	pendingSerial uint32
 	configured    bool
 
@@ -47,13 +55,11 @@ type window struct {
 	minWidth, minHeight uint32
 	appID               string
 
-	// Pointer state
 	ptrX, ptrY float64
+	ptrSerial  uint32
 
-	// Drag state
 	dragging bool
 
-	// Callbacks
 	onResize      func(uint32, uint32)
 	onLiveResize  func()
 	onClose       func()
@@ -69,14 +75,14 @@ type window struct {
 	onDrop        func([]string)
 
 	// Listener structs — must stay alive as long as the window lives.
-	registryListener   [2]uintptr // global, global_remove
-	wmBaseListener     [1]uintptr // ping
-	surfaceListener    [1]uintptr // configure
-	toplevelListener   [4]uintptr // configure, close, configure_bounds, wm_capabilities
-	seatListener       [2]uintptr // capabilities, name
-	keyboardListener   [6]uintptr // keymap, enter, leave, key, modifiers, repeat_info
-	pointerListener    [9]uintptr // enter, leave, motion, button, axis, frame, axis_source, axis_stop, axis_discrete
-	toplevelDecorListener [1]uintptr // configure
+	registryListener      [2]uintptr
+	wmBaseListener        [1]uintptr
+	surfaceListener       [1]uintptr
+	toplevelListener      [4]uintptr
+	seatListener          [2]uintptr
+	keyboardListener      [6]uintptr
+	pointerListener       [9]uintptr
+	toplevelDecorListener [1]uintptr
 
 	shouldClose bool
 	destroyed   bool
@@ -87,7 +93,6 @@ type globalEntry struct {
 	version uint32
 }
 
-// New creates a Wayland window.
 func New(title string, width, height, minWidth, minHeight uint32) (*window, error) {
 	if err := ensureLoaded(); err != nil {
 		return nil, err
@@ -101,13 +106,11 @@ func New(title string, width, height, minWidth, minHeight uint32) (*window, erro
 		globals:   make(map[string]globalEntry),
 	}
 
-	// Connect to Wayland display.
 	w.display = wlDisplayConnect(nil)
 	if w.display == nil {
 		return nil, fmt.Errorf("quikwin/wayland: wl_display_connect failed (WAYLAND_DISPLAY not set?)")
 	}
 
-	// Init XKB.
 	flags := xkbContextNoFlags
 	var xkbCtx unsafe.Pointer
 	ffi.CallFunction(&cifXkbContextNew, _xkbContextNew, unsafe.Pointer(&xkbCtx),
@@ -118,53 +121,167 @@ func New(title string, width, height, minWidth, minHeight uint32) (*window, erro
 	}
 	w.xkbCtx = xkbCtx
 
-	// Get global registry and enumerate globals.
 	w.registry = wlDisplayGetRegistry(w.display)
 	w.setupRegistryListener()
-	wlDisplayRoundtrip(w.display) // receive all globals
+	wlDisplayRoundtrip(w.display)
 
-	// Bind required globals.
 	if err := w.bindGlobals(); err != nil {
 		w.Destroy()
 		return nil, err
 	}
 
-	// Create surface and xdg_surface/xdg_toplevel.
 	w.surface = wlCompositorCreateSurface(w.compositor)
 	w.xdgSurface = xdgWmBaseGetXdgSurface(w.xdgWmBase, w.surface)
 	w.xdgToplevel = xdgSurfaceGetToplevel(w.xdgSurface)
 
 	w.setupListeners()
 
-	// Request server-side decorations if the compositor supports it.
 	if w.decorMgr != nil {
 		w.toplevelDecor = zxdgDecorationMgrGetToplevelDecoration(w.decorMgr, w.xdgToplevel)
 		if w.toplevelDecor != nil {
-			// Install a no-op configure listener so libwayland doesn't warn.
 			decorConfigureCB := func(data, decor unsafe.Pointer, mode uint32) {}
 			w.toplevelDecorListener[0] = ffi.NewCallback(decorConfigureCB)
 			addListener(w.toplevelDecor, &w.toplevelDecorListener[0], unsafe.Pointer(w))
-			zxdgToplevelDecorSetMode(w.toplevelDecor, 2) // 2 = server_side
+			zxdgToplevelDecorSetMode(w.toplevelDecor, uint32(xdgdeco.ToplevelDecorationV1ModeServerSide))
 		}
 	}
 
-	// Set window properties.
 	xdgToplevelSetTitle(w.xdgToplevel, title)
 	if minWidth > 0 || minHeight > 0 {
 		xdgToplevelSetMinSize(w.xdgToplevel, int32(minWidth), int32(minHeight))
 	}
 
-	// Commit to trigger configure.
 	wlSurfaceCommit(w.surface)
-	wlDisplayRoundtrip(w.display) // receive configure
+	wlDisplayRoundtrip(w.display)
+
+	// Set up cursor shape protocol via wayland-go (separate connection).
+	w.initCursorShape()
 
 	return w, nil
 }
 
-// ─── Global registry ──────────────────────────────────────────────────────────
+// initCursorShape opens a second lightweight connection for the wp_cursor_shape_v1
+// protocol which is handled via wayland-go. The cursor shape protocol only sends
+// requests (set_shape) and never receives events, so no dispatch loop is needed.
+func (w *window) initCursorShape() {
+	conn, err := wire.Connect("")
+	if err != nil {
+		return
+	}
+	w.cursorConn = conn
+
+	display := wl.NewDisplay(conn, 1)
+	registry, err := display.GetRegistry()
+	if err != nil {
+		conn.Close()
+		w.cursorConn = nil
+		return
+	}
+
+	objects := wire.NewObjectMap()
+	objects.Register(registry.ID(), registry)
+
+	var cursorG, seatG struct {
+		name    uint32
+		version uint32
+	}
+
+	registry.SetHandler(&cursorRegistryHandler{
+		onGlobal: func(ev wl.RegistryGlobalEvent) {
+			switch ev.Interface {
+			case cursorproto.ManagerV1Name:
+				cursorG.name = ev.Name
+				cursorG.version = ev.Version
+			case wl.SeatName:
+				seatG.name = ev.Name
+				seatG.version = ev.Version
+			}
+		},
+	})
+
+	cb, err := display.Sync()
+	if err != nil {
+		conn.Close()
+		w.cursorConn = nil
+		return
+	}
+	objects.Register(cb.ID(), cb)
+	done := false
+	cb.SetHandler(&cursorCallbackHandler{flag: &done})
+	for !done {
+		id, op, data, err := conn.RecvEvent()
+		if err != nil {
+			conn.Close()
+			w.cursorConn = nil
+			return
+		}
+		objects.Dispatch(id, op, data)
+	}
+
+	if cursorG.name == 0 || seatG.name == 0 {
+		conn.Close()
+		w.cursorConn = nil
+		return
+	}
+
+	ver := min(cursorG.version, cursorproto.ManagerV1Version)
+	w.cursorMgr, err = cursorproto.BindManagerV1(conn, registry.ID(), cursorG.name, ver)
+	if err != nil {
+		conn.Close()
+		w.cursorConn = nil
+		return
+	}
+
+	// Bind seat to get a pointer ID for the cursor device.
+	seatVer := min(seatG.version, 5)
+	seat, err := wl.BindSeat(conn, registry.ID(), seatG.name, seatVer)
+	if err != nil {
+		conn.Close()
+		w.cursorConn = nil
+		return
+	}
+	objects.Register(seat.ID(), seat)
+
+	// Roundtrip to process seat bind.
+	cb, err = display.Sync()
+	if err != nil {
+		conn.Close()
+		w.cursorConn = nil
+		return
+	}
+	objects.Register(cb.ID(), cb)
+	done = false
+	cb.SetHandler(&cursorCallbackHandler{flag: &done})
+
+	var pointer *wl.Pointer
+	seat.SetHandler(&cursorSeatHandler{
+		onCaps: func(ev wl.SeatCapabilitiesEvent) {
+			if ev.Capabilities&wl.SeatCapabilityPointer != 0 {
+				pointer, _ = seat.GetPointer()
+			}
+		},
+	})
+
+	for !done {
+		id, op, data, err := conn.RecvEvent()
+		if err != nil {
+			conn.Close()
+			w.cursorConn = nil
+			return
+		}
+		objects.Dispatch(id, op, data)
+	}
+
+	if pointer == nil {
+		return
+	}
+
+	w.cursorDev, _ = w.cursorMgr.GetPointer(pointer.ID())
+}
+
+// --- Global registry ---
 
 func (w *window) setupRegistryListener() {
-	// global callback: (data, registry, name, interface_name, version)
 	globalCB := func(data, reg unsafe.Pointer, name uint32, ifaceName *byte, version uint32) {
 		iface := ptrToString(unsafe.Pointer(ifaceName))
 		w.mu.Lock()
@@ -200,16 +317,15 @@ func (w *window) bindGlobals() error {
 		return nil
 	}
 
-	if err := bind("wl_compositor", &w.compositor, &ifaceWlCompositor, 4); err != nil {
+	if err := bind(wl.CompositorName, &w.compositor, &ifaceWlCompositor, 4); err != nil {
 		return err
 	}
 
-	if err := bind("xdg_wm_base", &w.xdgWmBase, &ifaceXdgWmBase, 2); err != nil {
+	if err := bind(xdg.WmBaseName, &w.xdgWmBase, &ifaceXdgWmBase, 2); err != nil {
 		return err
 	}
 
-	// zxdg_decoration_manager_v1 is optional
-	if e, ok := w.globals["zxdg_decoration_manager_v1"]; ok {
+	if e, ok := w.globals[xdgdeco.DecorationManagerV1Name]; ok {
 		ver := e.version
 		if ver > 1 {
 			ver = 1
@@ -220,8 +336,7 @@ func (w *window) bindGlobals() error {
 		}
 	}
 
-	// seat is optional (some headless compositors may not have it)
-	if e, ok := w.globals["wl_seat"]; ok {
+	if e, ok := w.globals[wl.SeatName]; ok {
 		ver := e.version
 		if ver > 5 {
 			ver = 5
@@ -234,10 +349,9 @@ func (w *window) bindGlobals() error {
 	return nil
 }
 
-// ─── Listener setup ───────────────────────────────────────────────────────────
+// --- Listener setup ---
 
 func (w *window) setupListeners() {
-	// xdg_wm_base ping
 	pingCB := func(data, base unsafe.Pointer, serial uint32) {
 		xdgWmBasePong(base, serial)
 		wlDisplayFlush(w.display)
@@ -245,7 +359,6 @@ func (w *window) setupListeners() {
 	w.wmBaseListener[0] = ffi.NewCallback(pingCB)
 	addListener(w.xdgWmBase, &w.wmBaseListener[0], unsafe.Pointer(w))
 
-	// xdg_surface configure
 	surfConfigureCB := func(data, surf unsafe.Pointer, serial uint32) {
 		w.mu.Lock()
 		w.pendingSerial = serial
@@ -259,7 +372,6 @@ func (w *window) setupListeners() {
 	w.surfaceListener[0] = ffi.NewCallback(surfConfigureCB)
 	addListener(w.xdgSurface, &w.surfaceListener[0], unsafe.Pointer(w))
 
-	// xdg_toplevel
 	toplevelConfigureCB := func(data, tl unsafe.Pointer, width, height int32, states unsafe.Pointer) {
 		if width <= 0 || height <= 0 {
 			return
@@ -301,11 +413,12 @@ func (w *window) setupListeners() {
 
 func (w *window) setupSeatListeners() {
 	seatCapCB := func(data, seat unsafe.Pointer, caps uint32) {
-		if caps&wlSeatCapKeyboard != 0 && w.keyboard == nil {
+		c := wl.SeatCapability(caps)
+		if c&wl.SeatCapabilityKeyboard != 0 && w.keyboard == nil {
 			w.keyboard = wlSeatGetKeyboard(seat)
 			w.setupKeyboardListeners()
 		}
-		if caps&wlSeatCapPointer != 0 && w.pointer == nil {
+		if c&wl.SeatCapabilityPointer != 0 && w.pointer == nil {
 			w.pointer = wlSeatGetPointer(seat)
 			w.setupPointerListeners()
 		}
@@ -318,7 +431,7 @@ func (w *window) setupSeatListeners() {
 
 func (w *window) setupKeyboardListeners() {
 	keymapCB := func(data, kb unsafe.Pointer, format, fd uint32, size uint32) {
-		if format != wlKeyboardKeymapFormatXkbV1 {
+		if format != uint32(wl.KeyboardKeymapFormatXkbV1) {
 			return
 		}
 		b := readFD(int(fd), int(size))
@@ -347,11 +460,13 @@ func (w *window) setupKeyboardListeners() {
 		w.mu.Lock()
 		if w.xkbKeymap != nil {
 			old := w.xkbKeymap
-			ffi.CallFunction(&cifXkbKeymapUnref, _xkbKeymapUnref, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(), []unsafe.Pointer{unsafe.Pointer(&old)})
+			var r int32
+			ffi.CallFunction(&cifXkbKeymapUnref, _xkbKeymapUnref, unsafe.Pointer(&r), []unsafe.Pointer{unsafe.Pointer(&old)})
 		}
 		if w.xkbState != nil {
 			old := w.xkbState
-			ffi.CallFunction(&cifXkbStateUnref, _xkbStateUnref, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(), []unsafe.Pointer{unsafe.Pointer(&old)})
+			var r int32
+			ffi.CallFunction(&cifXkbStateUnref, _xkbStateUnref, unsafe.Pointer(&r), []unsafe.Pointer{unsafe.Pointer(&old)})
 		}
 		w.xkbKeymap = km
 		w.xkbState = state
@@ -368,7 +483,6 @@ func (w *window) setupKeyboardListeners() {
 		}
 	}
 	keyCB := func(data, kb unsafe.Pointer, serial, time, key, state uint32) {
-		// Wayland keycodes are evdev + 8.
 		xkbKeycode := key + 8
 		w.mu.Lock()
 		xkbState := w.xkbState
@@ -379,16 +493,16 @@ func (w *window) setupKeyboardListeners() {
 		var sym uint32
 		ffi.CallFunction(&cifXkbStateKeyGetOneSym, _xkbStateKeyGetOneSym, unsafe.Pointer(&sym),
 			[]unsafe.Pointer{unsafe.Pointer(&xkbState), unsafe.Pointer(&xkbKeycode)})
-		k := xkbSymToKey(uint64(sym))
+		k := keysymToKey(uint64(sym))
 		action := wtypes.Press
-		if state == wlKeyboardKeyStateReleased {
+		if wl.KeyboardKeyState(state) == wl.KeyboardKeyStateReleased {
 			action = wtypes.Release
 		}
 		mods := w.currentMods()
 		if fn := w.onKey; fn != nil {
 			fn(k, action, mods)
 		}
-		if state == wlKeyboardKeyStatePressed {
+		if wl.KeyboardKeyState(state) == wl.KeyboardKeyStatePressed {
 			if fn := w.onChar; fn != nil {
 				var cp uint32
 				ffi.CallFunction(&cifXkbStateKeyGetUtf32, _xkbStateKeyGetUtf32, unsafe.Pointer(&cp),
@@ -427,7 +541,11 @@ func (w *window) setupKeyboardListeners() {
 }
 
 func (w *window) setupPointerListeners() {
-	enterCB := func(data, ptr unsafe.Pointer, serial uint32, surf unsafe.Pointer, sx, sy int32) {}
+	enterCB := func(data, ptr unsafe.Pointer, serial uint32, surf unsafe.Pointer, sx, sy int32) {
+		w.mu.Lock()
+		w.ptrSerial = serial
+		w.mu.Unlock()
+	}
 	leaveCB := func(data, ptr unsafe.Pointer, serial uint32, surf unsafe.Pointer) {}
 	motionCB := func(data, ptr unsafe.Pointer, time uint32, sx, sy int32) {
 		x := wlFixedToFloat(sx)
@@ -446,12 +564,12 @@ func (w *window) setupPointerListeners() {
 		}
 	}
 	buttonCB := func(data, ptr unsafe.Pointer, serial, time, btn, state uint32) {
-		b, ok := wlButton(btn)
+		b, ok := evdevButton(btn)
 		if !ok {
 			return
 		}
 		action := wtypes.Press
-		if state == wlPointerButtonStateReleased {
+		if wl.PointerButtonState(state) == wl.PointerButtonStateReleased {
 			action = wtypes.Release
 		}
 		mods := w.currentMods()
@@ -471,7 +589,7 @@ func (w *window) setupPointerListeners() {
 	axisCB := func(data, ptr unsafe.Pointer, time, axis uint32, value int32) {
 		v := wlFixedToFloat(value)
 		if fn := w.onScroll; fn != nil {
-			if axis == wlPointerAxisVerticalScroll {
+			if wl.PointerAxis(axis) == wl.PointerAxisVerticalScroll {
 				fn(0, -v/10)
 			} else {
 				fn(v/10, 0)
@@ -495,7 +613,7 @@ func (w *window) setupPointerListeners() {
 	addListener(w.pointer, &w.pointerListener[0], unsafe.Pointer(w))
 }
 
-// ─── window.Window interface ──────────────────────────────────────────────────
+// --- window.Window interface ---
 
 func (w *window) Size() (uint32, uint32) {
 	w.mu.Lock()
@@ -503,11 +621,7 @@ func (w *window) Size() (uint32, uint32) {
 	return w.width, w.height
 }
 
-func (w *window) Scale() float32 {
-	// Wayland scale is managed by the compositor; default to 1.0.
-	// Full HiDPI support requires wl_output scale events.
-	return 1.0
-}
+func (w *window) Scale() float32 { return 1.0 }
 
 func (w *window) ShouldClose() bool {
 	w.mu.Lock()
@@ -516,7 +630,16 @@ func (w *window) ShouldClose() bool {
 }
 
 func (w *window) PollEvents() {
+	wlDisplayDispatchPending(w.display)
+	for wlDisplayPrepareRead(w.display) != 0 {
+		wlDisplayDispatchPending(w.display)
+	}
 	wlDisplayFlush(w.display)
+	if fdReadable(wlDisplayGetFd(w.display)) {
+		wlDisplayReadEvents(w.display)
+	} else {
+		wlDisplayCancelRead(w.display)
+	}
 	wlDisplayDispatchPending(w.display)
 }
 
@@ -525,8 +648,14 @@ func (w *window) SetTitle(title string) {
 	wlDisplayFlush(w.display)
 }
 
-func (w *window) SetCursor(_ wtypes.CursorShape) {
-	// Full cursor support requires wl_cursor_theme; stubbed for now.
+func (w *window) SetCursor(shape wtypes.CursorShape) {
+	if w.cursorDev == nil {
+		return
+	}
+	w.mu.Lock()
+	serial := w.ptrSerial
+	w.mu.Unlock()
+	w.cursorDev.SetShape(serial, cursorShapeMap(shape))
 }
 
 func (w *window) SetMinSize(mw, mh uint32) {
@@ -544,8 +673,6 @@ func (w *window) SetSize(sw, sh uint32) {
 	w.width = sw
 	w.height = sh
 	w.mu.Unlock()
-	// Wayland doesn't have a direct "set size" request on xdg_toplevel;
-	// size is negotiated via configure. Signal resize to app.
 	if fn := w.onResize; fn != nil {
 		fn(sw, sh)
 	}
@@ -559,6 +686,10 @@ func (w *window) Destroy() {
 	}
 	w.destroyed = true
 	w.mu.Unlock()
+
+	if w.cursorConn != nil {
+		w.cursorConn.Close()
+	}
 
 	proxyDestroy := func(p *unsafe.Pointer) {
 		if *p != nil {
@@ -579,13 +710,16 @@ func (w *window) Destroy() {
 	proxyDestroy(&w.registry)
 
 	if w.xkbState != nil {
-		ffi.CallFunction(&cifXkbStateUnref, _xkbStateUnref, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(), []unsafe.Pointer{unsafe.Pointer(&w.xkbState)})
+		var r int32
+		ffi.CallFunction(&cifXkbStateUnref, _xkbStateUnref, unsafe.Pointer(&r), []unsafe.Pointer{unsafe.Pointer(&w.xkbState)})
 	}
 	if w.xkbKeymap != nil {
-		ffi.CallFunction(&cifXkbKeymapUnref, _xkbKeymapUnref, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(), []unsafe.Pointer{unsafe.Pointer(&w.xkbKeymap)})
+		var r int32
+		ffi.CallFunction(&cifXkbKeymapUnref, _xkbKeymapUnref, unsafe.Pointer(&r), []unsafe.Pointer{unsafe.Pointer(&w.xkbKeymap)})
 	}
 	if w.xkbCtx != nil {
-		ffi.CallFunction(&cifXkbContextUnref, _xkbContextUnref, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(), []unsafe.Pointer{unsafe.Pointer(&w.xkbCtx)})
+		var r int32
+		ffi.CallFunction(&cifXkbContextUnref, _xkbContextUnref, unsafe.Pointer(&r), []unsafe.Pointer{unsafe.Pointer(&w.xkbCtx)})
 	}
 	wlDisplayDisconnect(w.display)
 }
@@ -595,46 +729,43 @@ func (w *window) BeginDrag() {
 	w.dragging = true
 	x, y := w.ptrX, w.ptrY
 	w.mu.Unlock()
-	// xdg_toplevel.move requires a seat serial — use a no-op gesture instead
-	// (real move requires intercepting the button press serial).
 	if fn := w.onDragBegin; fn != nil {
 		fn(x, y)
 	}
 }
 
-// ─── Event registration ───────────────────────────────────────────────────────
+// --- Event registration ---
 
-func (w *window) OnResize(fn func(uint32, uint32))           { w.onResize = fn }
-func (w *window) OnLiveResize(fn func())                     { w.onLiveResize = fn }
-func (w *window) OnClose(fn func())                          { w.onClose = fn }
-func (w *window) OnFocus(fn func(bool))                      { w.onFocus = fn }
-func (w *window) OnKey(fn func(wtypes.Key, wtypes.Action, wtypes.Mod)) { w.onKey = fn }
-func (w *window) OnChar(fn func(rune))                       { w.onChar = fn }
+func (w *window) OnResize(fn func(uint32, uint32))                              { w.onResize = fn }
+func (w *window) OnLiveResize(fn func())                                        { w.onLiveResize = fn }
+func (w *window) OnClose(fn func())                                             { w.onClose = fn }
+func (w *window) OnFocus(fn func(bool))                                         { w.onFocus = fn }
+func (w *window) OnKey(fn func(wtypes.Key, wtypes.Action, wtypes.Mod))          { w.onKey = fn }
+func (w *window) OnChar(fn func(rune))                                          { w.onChar = fn }
 func (w *window) OnMouseButton(fn func(wtypes.Button, wtypes.Action, wtypes.Mod)) {
 	w.onMouseButton = fn
 }
-func (w *window) OnMouseMove(fn func(float64, float64))      { w.onMouseMove = fn }
-func (w *window) OnScroll(fn func(float64, float64))         { w.onScroll = fn }
-func (w *window) OnDragBegin(fn func(float64, float64))      { w.onDragBegin = fn }
-func (w *window) OnDragMove(fn func(float64, float64))       { w.onDragMove = fn }
-func (w *window) OnDragEnd(fn func(float64, float64))        { w.onDragEnd = fn }
-func (w *window) OnDrop(fn func([]string))                   { w.onDrop = fn }
+func (w *window) OnMouseMove(fn func(float64, float64))  { w.onMouseMove = fn }
+func (w *window) OnScroll(fn func(float64, float64))     { w.onScroll = fn }
+func (w *window) OnDragBegin(fn func(float64, float64))  { w.onDragBegin = fn }
+func (w *window) OnDragMove(fn func(float64, float64))   { w.onDragMove = fn }
+func (w *window) OnDragEnd(fn func(float64, float64))    { w.onDragEnd = fn }
+func (w *window) OnDrop(fn func([]string))               { w.onDrop = fn }
 
-// ─── WaylandWindow interface ──────────────────────────────────────────────────
+// --- WaylandWindow interface ---
 
-func (w *window) WlDisplay() (uintptr, error) { return uintptr(w.display), nil }
-func (w *window) WlSurface() (uintptr, error) { return uintptr(w.surface), nil }
+func (w *window) WlDisplay() uintptr { return uintptr(w.display) }
+func (w *window) WlSurface() uintptr { return uintptr(w.surface) }
 
-func (w *window) SetAppID(id string) error {
+func (w *window) SetAppID(id string) {
 	w.mu.Lock()
 	w.appID = id
 	w.mu.Unlock()
 	xdgToplevelSetAppID(w.xdgToplevel, id)
 	wlDisplayFlush(w.display)
-	return nil
 }
 
-// ─── vkwin.Window interface ───────────────────────────────────────────────────
+// --- vkwin.Window interface ---
 
 func (w *window) NewSurface(instance vk.Instance) (*vk.SurfaceKHR, error) {
 	return instance.CreateWaylandSurfaceKHR(&vk.WaylandSurfaceCreateInfoKHR{
@@ -643,7 +774,7 @@ func (w *window) NewSurface(instance vk.Instance) (*vk.SurfaceKHR, error) {
 	}, nil)
 }
 
-// ─── goffi wrappers ───────────────────────────────────────────────────────────
+// --- goffi wrappers ---
 
 func wlDisplayConnect(name []byte) unsafe.Pointer {
 	var namePtr unsafe.Pointer
@@ -657,7 +788,8 @@ func wlDisplayConnect(name []byte) unsafe.Pointer {
 }
 
 func wlDisplayDisconnect(dpy unsafe.Pointer) {
-	ffi.CallFunction(&cifWlDisplayDisconnect, _wlDisplayDisconnect, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(),
+	var r int32
+	ffi.CallFunction(&cifWlDisplayDisconnect, _wlDisplayDisconnect, unsafe.Pointer(&r),
 		[]unsafe.Pointer{unsafe.Pointer(&dpy)})
 }
 
@@ -679,9 +811,32 @@ func wlDisplayDispatchPending(dpy unsafe.Pointer) {
 		[]unsafe.Pointer{unsafe.Pointer(&dpy)})
 }
 
+func wlDisplayGetFd(dpy unsafe.Pointer) int32 {
+	var result int32
+	ffi.CallFunction(&cifWlDisplayGetFd, _wlDisplayGetFd, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&dpy)})
+	return result
+}
+
+func wlDisplayPrepareRead(dpy unsafe.Pointer) int32 {
+	var result int32
+	ffi.CallFunction(&cifWlDisplayPrepareRead, _wlDisplayPrepareRead, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&dpy)})
+	return result
+}
+
+func wlDisplayReadEvents(dpy unsafe.Pointer) {
+	var result int32
+	ffi.CallFunction(&cifWlDisplayReadEvents, _wlDisplayReadEvents, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&dpy)})
+}
+
+func wlDisplayCancelRead(dpy unsafe.Pointer) {
+	ffi.CallFunction(&cifWlDisplayCancelRead, _wlDisplayCancelRead, nil,
+		[]unsafe.Pointer{unsafe.Pointer(&dpy)})
+}
+
 func wlDisplayGetRegistry(dpy unsafe.Pointer) unsafe.Pointer {
-	// wl_display_get_registry is static inline in wayland-client.h:
-	//   wl_proxy_marshal_constructor(display, 1, &wl_registry_interface, NULL)
 	iface := unsafe.Pointer(&ifaceWlRegistry)
 	var null unsafe.Pointer
 	var result unsafe.Pointer
@@ -723,7 +878,8 @@ func registryBind(registry unsafe.Pointer, name uint32, iface *wlInterface, vers
 }
 
 func wlProxyDestroy(proxy unsafe.Pointer) {
-	ffi.CallFunction(&cifWlProxyDestroy, _wlProxyDestroy, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(),
+	var r int32
+	ffi.CallFunction(&cifWlProxyDestroy, _wlProxyDestroy, unsafe.Pointer(&r),
 		[]unsafe.Pointer{unsafe.Pointer(&proxy)})
 }
 
@@ -800,7 +956,8 @@ func xdgWmBasePong(wmBase unsafe.Pointer, serial uint32) {
 	pin.Pin(&args[0])
 	defer pin.Unpin()
 	argsPtr := unsafe.Pointer(&args[0])
-	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(),
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
 		[]unsafe.Pointer{
 			unsafe.Pointer(&wmBase),
 			unsafe.Pointer(&opcXdgWmBasePong),
@@ -814,7 +971,8 @@ func xdgSurfaceAckConfigure(surf unsafe.Pointer, serial uint32) {
 	pin.Pin(&args[0])
 	defer pin.Unpin()
 	argsPtr := unsafe.Pointer(&args[0])
-	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(),
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
 		[]unsafe.Pointer{
 			unsafe.Pointer(&surf),
 			unsafe.Pointer(&opcXdgSurfaceAckConfigure),
@@ -832,7 +990,8 @@ func xdgToplevelSetTitle(tl unsafe.Pointer, title string) {
 	pin2.Pin(&args[0])
 	defer pin2.Unpin()
 	argsPtr := unsafe.Pointer(&args[0])
-	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(),
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
 		[]unsafe.Pointer{
 			unsafe.Pointer(&tl),
 			unsafe.Pointer(&opcXdgToplevelSetTitle),
@@ -850,7 +1009,8 @@ func xdgToplevelSetAppID(tl unsafe.Pointer, id string) {
 	pin2.Pin(&args[0])
 	defer pin2.Unpin()
 	argsPtr := unsafe.Pointer(&args[0])
-	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(),
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
 		[]unsafe.Pointer{
 			unsafe.Pointer(&tl),
 			unsafe.Pointer(&opcXdgToplevelSetAppID),
@@ -859,17 +1019,15 @@ func xdgToplevelSetAppID(tl unsafe.Pointer, id string) {
 }
 
 func xdgToplevelSetMinSize(tl unsafe.Pointer, w, h int32) {
-	args := [2]wlArgument{
-		{},
-		{},
-	}
+	args := [2]wlArgument{}
 	*(*int32)(unsafe.Pointer(&args[0][0])) = w
 	*(*int32)(unsafe.Pointer(&args[1][0])) = h
 	var pin runtime.Pinner
 	pin.Pin(&args[0])
 	defer pin.Unpin()
 	argsPtr := unsafe.Pointer(&args[0])
-	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(),
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
 		[]unsafe.Pointer{
 			unsafe.Pointer(&tl),
 			unsafe.Pointer(&opcXdgToplevelSetMinSize),
@@ -908,6 +1066,26 @@ func wlSeatGetKeyboard(seat unsafe.Pointer) unsafe.Pointer {
 	return result
 }
 
+func wlSeatGetPointer(seat unsafe.Pointer) unsafe.Pointer {
+	args := [1]wlArgument{wlArgNewID()}
+	var pin runtime.Pinner
+	pin.Pin(&args[0])
+	defer pin.Unpin()
+	argsPtr := unsafe.Pointer(&args[0])
+	ifacePtr := unsafe.Pointer(&ifaceWlPointer)
+	var result unsafe.Pointer
+	ffi.CallFunction(&cifWlProxyMarshalArrayConstructorVersioned, _wlProxyMarshalArrayConstructorVersioned,
+		unsafe.Pointer(&result),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&seat),
+			unsafe.Pointer(&opcWlSeatGetPointer),
+			unsafe.Pointer(&argsPtr),
+			unsafe.Pointer(&ifacePtr),
+			pU32(1),
+		})
+	return result
+}
+
 func zxdgDecorationMgrGetToplevelDecoration(mgr, toplevel unsafe.Pointer) unsafe.Pointer {
 	args := [2]wlArgument{wlArgNewID(), wlArgPtr(toplevel)}
 	var pin runtime.Pinner
@@ -934,7 +1112,8 @@ func zxdgToplevelDecorSetMode(decor unsafe.Pointer, mode uint32) {
 	pin.Pin(&args[0])
 	defer pin.Unpin()
 	argsPtr := unsafe.Pointer(&args[0])
-	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, func() unsafe.Pointer { var r int32; return unsafe.Pointer(&r) }(),
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
 		[]unsafe.Pointer{
 			unsafe.Pointer(&decor),
 			unsafe.Pointer(&opcZxdgToplevelDecorSetMode),
@@ -942,27 +1121,7 @@ func zxdgToplevelDecorSetMode(decor unsafe.Pointer, mode uint32) {
 		})
 }
 
-func wlSeatGetPointer(seat unsafe.Pointer) unsafe.Pointer {
-	args := [1]wlArgument{wlArgNewID()}
-	var pin runtime.Pinner
-	pin.Pin(&args[0])
-	defer pin.Unpin()
-	argsPtr := unsafe.Pointer(&args[0])
-	ifacePtr := unsafe.Pointer(&ifaceWlPointer)
-	var result unsafe.Pointer
-	ffi.CallFunction(&cifWlProxyMarshalArrayConstructorVersioned, _wlProxyMarshalArrayConstructorVersioned,
-		unsafe.Pointer(&result),
-		[]unsafe.Pointer{
-			unsafe.Pointer(&seat),
-			unsafe.Pointer(&opcWlSeatGetPointer),
-			unsafe.Pointer(&argsPtr),
-			unsafe.Pointer(&ifacePtr),
-			pU32(1),
-		})
-	return result
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// --- Helpers ---
 
 func cstr(s string) []byte { return append([]byte(s), 0) }
 
@@ -981,20 +1140,49 @@ func ptrToString(p unsafe.Pointer) string {
 
 func pU32(v uint32) unsafe.Pointer { return unsafe.Pointer(&v) }
 
-func wlButton(code uint32) (wtypes.Button, bool) {
+func wlFixedToFloat(v int32) float64 { return float64(v) / 256.0 }
+
+func evdevButton(code uint32) (wtypes.Button, bool) {
 	switch code {
-	case btnLeft:
+	case 0x110:
 		return wtypes.ButtonLeft, true
-	case btnRight:
+	case 0x111:
 		return wtypes.ButtonRight, true
-	case btnMiddle:
+	case 0x112:
 		return wtypes.ButtonMiddle, true
-	case btnSide:
+	case 0x113:
 		return wtypes.Button4, true
-	case btnExtra:
+	case 0x114:
 		return wtypes.Button5, true
 	}
 	return 0, false
+}
+
+func cursorShapeMap(shape wtypes.CursorShape) cursorproto.DeviceV1Shape {
+	switch shape {
+	case wtypes.CursorArrow:
+		return cursorproto.DeviceV1ShapeDefault
+	case wtypes.CursorIBeam:
+		return cursorproto.DeviceV1ShapeText
+	case wtypes.CursorCrosshair:
+		return cursorproto.DeviceV1ShapeCrosshair
+	case wtypes.CursorHand:
+		return cursorproto.DeviceV1ShapePointer
+	case wtypes.CursorHResize:
+		return cursorproto.DeviceV1ShapeEwResize
+	case wtypes.CursorVResize:
+		return cursorproto.DeviceV1ShapeNsResize
+	case wtypes.CursorNWSEResize:
+		return cursorproto.DeviceV1ShapeNwseResize
+	case wtypes.CursorNESWResize:
+		return cursorproto.DeviceV1ShapeNeswResize
+	case wtypes.CursorAllResize:
+		return cursorproto.DeviceV1ShapeAllScroll
+	case wtypes.CursorNotAllowed:
+		return cursorproto.DeviceV1ShapeNotAllowed
+	default:
+		return cursorproto.DeviceV1ShapeDefault
+	}
 }
 
 func (w *window) currentMods() wtypes.Mod {
@@ -1045,7 +1233,6 @@ func (w *window) currentMods() wtypes.Mod {
 	return m
 }
 
-// readFD reads size bytes from a file descriptor and closes it.
 func readFD(fd, size int) []byte {
 	if size <= 0 {
 		return nil
@@ -1053,29 +1240,20 @@ func readFD(fd, size int) []byte {
 	b := make([]byte, size)
 	n := 0
 	for n < size {
-		nn, err := readSyscall(fd, b[n:])
+		nn, err := sysRead(fd, b[n:])
 		n += nn
 		if err != nil {
 			break
 		}
 	}
-	closeSyscall(fd)
+	sysClose(fd)
 	if n < size {
 		return nil
 	}
 	return b
 }
 
-// xkbSymToKey maps XKB keysyms (same values as X11 keysyms) to our Key type.
-// Re-use the same mapping table as X11 since the keysym values are identical.
-func xkbSymToKey(sym uint64) wtypes.Key {
-	// XKB keysym values are identical to X11 keysym values.
-	// Use the X11 constants defined in this package.
-	return keysymToKeyWL(sym)
-}
-
-// keysymToKeyWL is the same mapping as in x11/keys.go.
-func keysymToKeyWL(sym uint64) wtypes.Key {
+func keysymToKey(sym uint64) wtypes.Key {
 	switch {
 	case sym == 0x0020:
 		return wtypes.KeySpace
@@ -1169,18 +1347,6 @@ func keysymToKeyWL(sym uint64) wtypes.Key {
 	return wtypes.KeyUnknown
 }
 
-// syscall wrappers — implemented via Go's syscall package (available without CGo).
-
-func readSyscall(fd int, b []byte) (int, error) {
-	n, err := sysRead(fd, b)
-	return n, err
-}
-
-func closeSyscall(fd int) {
-	sysClose(fd)
-}
-
-// parseURIList parses a text/uri-list payload into local file paths.
 func parseURIList(raw string) []string {
 	var paths []string
 	for _, line := range strings.Split(raw, "\n") {
@@ -1194,3 +1360,33 @@ func parseURIList(raw string) []string {
 	}
 	return paths
 }
+
+// --- wayland-go handler adapters for cursor shape setup ---
+
+type cursorRegistryHandler struct {
+	onGlobal func(wl.RegistryGlobalEvent)
+}
+
+func (h *cursorRegistryHandler) HandleRegistryGlobal(ev wl.RegistryGlobalEvent) {
+	if h.onGlobal != nil {
+		h.onGlobal(ev)
+	}
+}
+func (h *cursorRegistryHandler) HandleRegistryGlobalRemove(ev wl.RegistryGlobalRemoveEvent) {}
+
+type cursorCallbackHandler struct {
+	flag *bool
+}
+
+func (h *cursorCallbackHandler) HandleCallbackDone(ev wl.CallbackDoneEvent) { *h.flag = true }
+
+type cursorSeatHandler struct {
+	onCaps func(wl.SeatCapabilitiesEvent)
+}
+
+func (h *cursorSeatHandler) HandleSeatCapabilities(ev wl.SeatCapabilitiesEvent) {
+	if h.onCaps != nil {
+		h.onCaps(ev)
+	}
+}
+func (h *cursorSeatHandler) HandleSeatName(ev wl.SeatNameEvent) {}

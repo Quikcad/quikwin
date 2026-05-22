@@ -5,7 +5,6 @@ package wayland
 import "unsafe"
 
 // wlInterface mirrors struct wl_interface (40 bytes on 64-bit).
-// Field order matches C struct exactly for ABI compatibility.
 type wlInterface struct {
 	name        *byte
 	version     int32
@@ -44,43 +43,33 @@ func wlArgStr(s *byte) wlArgument {
 
 func wlArgNewID() wlArgument { return wlArgument{} }
 
-// bstr returns a *byte pointing at a null-terminated copy of s.
-// The backing array is allocated on the heap and never freed (static strings only).
 func bstr(s string) *byte {
 	b := make([]byte, len(s)+1)
 	copy(b, s)
 	return &b[0]
 }
 
-// Protocol interface definitions. These are the minimal descriptors needed for
-// wl_proxy_marshal_array_constructor_versioned to bind globals correctly.
-// Event/method arrays carry correct counts so dispatch works; we provide minimal
-// wl_message entries with valid signatures so libwayland can parse arguments.
-
+// Signature strings for wl_message descriptors.
 var (
-	// Signature strings for wl_message descriptors.
-	sigEmpty  = bstr("")
-	sigU      = bstr("u")
-	sigS      = bstr("s")
-	sigN      = bstr("n")
-	sigNo     = bstr("no")
-	sigUsun   = bstr("usun")
-	sigIi     = bstr("ii")
-	sigIia    = bstr("iia")
-	sigO      = bstr("o")
-	sigUo     = bstr("uo")
-	sigUoa    = bstr("uoa")
-	sigUhu    = bstr("uhu")
-	sigUuuu   = bstr("uuuu")
-	sigUuuuu  = bstr("uuuuu")
-	sigUoff   = bstr("uoff")
-	sigUuf    = bstr("uuf")
-	sigUsu    = bstr("usu")
-	sigUff    = bstr("uff")
+	sigEmpty = bstr("")
+	sigU     = bstr("u")
+	sigS     = bstr("s")
+	sigN     = bstr("n")
+	sigNo    = bstr("no")
+	sigUsun  = bstr("usun")
+	sigIi    = bstr("ii")
+	sigIia   = bstr("iia")
+	sigO     = bstr("o")
+	sigUo    = bstr("uo")
+	sigUoa   = bstr("uoa")
+	sigUhu   = bstr("uhu")
+	sigUuuu  = bstr("uuuu")
+	sigUuuuu = bstr("uuuuu")
+	sigUoff  = bstr("uoff")
+	sigUuf   = bstr("uuf")
+	sigUsu   = bstr("usu")
+	sigUff   = bstr("uff")
 
-	// sharedNullTypes is a valid pointer to an array of null wlInterface pointers.
-	// Used as the types field in wl_message when no interface-typed args are present.
-	// libwayland dereferences types[i] for 'n'/'o' args; NULL entries mean untyped.
 	sharedNullTypes = [16]*wlInterface{}
 	nilTypes        = &sharedNullTypes[0]
 )
@@ -119,7 +108,7 @@ var (
 	}
 )
 
-// wl_surface: 11 requests, 2 events (only opcodes 0-6 need valid entries for our usage)
+// wl_surface: 7 requests, 2 events
 var (
 	wlSurfaceMethods = [7]wlMessage{
 		{name: bstr("destroy"), signature: sigEmpty, types: nilTypes},
@@ -144,7 +133,7 @@ var (
 	}
 )
 
-// xdg_wm_base: 4 requests, 1 event (ping)
+// xdg_wm_base: 4 requests, 1 event
 var (
 	xdgWmBaseMethods = [4]wlMessage{
 		{name: bstr("destroy"), signature: sigEmpty, types: nilTypes},
@@ -165,7 +154,7 @@ var (
 	}
 )
 
-// xdg_surface: 5 requests, 1 event (configure)
+// xdg_surface: 5 requests, 1 event
 var (
 	xdgSurfaceMethods = [5]wlMessage{
 		{name: bstr("destroy"), signature: sigEmpty, types: nilTypes},
@@ -187,7 +176,7 @@ var (
 	}
 )
 
-// xdg_toplevel: 14 requests, 4 events (entries 0-8 needed for set_min_size at opcode 8)
+// xdg_toplevel: 9 requests, 4 events
 var (
 	xdgToplevelMethods = [9]wlMessage{
 		{name: bstr("destroy"), signature: sigEmpty, types: nilTypes},
@@ -238,7 +227,7 @@ var (
 	}
 )
 
-// wl_keyboard: 1 request (release at opcode 0), 6 events
+// wl_keyboard: 1 request, 6 events
 var (
 	wlKeyboardMethods = [1]wlMessage{
 		{name: bstr("release"), signature: sigEmpty, types: nilTypes},
@@ -322,81 +311,31 @@ var (
 	}
 )
 
-// Wayland request opcodes — vars so they are addressable for ffi.CallFunction args.
+// Wayland request opcodes.
 var (
-	opcWlDisplayGetRegistry      = uint32(1) // wl_display.get_registry (opcode 1)
-	opcWlRegistryBind            = uint32(0)
-	opcWlCompositorCreateSurface = uint32(0)
-	opcXdgWmBaseGetXdgSurface    = uint32(2)
-	opcXdgWmBasePong             = uint32(3)
-	opcXdgSurfaceGetToplevel     = uint32(1)
-	opcXdgSurfaceAckConfigure    = uint32(4)
-	opcXdgToplevelSetTitle       = uint32(2)
-	opcXdgToplevelSetAppID       = uint32(3)
-	opcXdgToplevelSetMinSize     = uint32(8)
-	opcXdgToplevelDestroy        = uint32(0)
-	opcWlSurfaceCommit           = uint32(6)
-	opcWlSeatGetPointer          = uint32(0)
-	opcWlSeatGetKeyboard         = uint32(1)
-	opcWlPointerRelease                   = uint32(1)
-	opcWlKeyboardRelease                  = uint32(0)
+	opcWlDisplayGetRegistry              = uint32(1)
+	opcWlRegistryBind                    = uint32(0)
+	opcWlCompositorCreateSurface         = uint32(0)
+	opcXdgWmBaseGetXdgSurface            = uint32(2)
+	opcXdgWmBasePong                     = uint32(3)
+	opcXdgSurfaceGetToplevel             = uint32(1)
+	opcXdgSurfaceAckConfigure            = uint32(4)
+	opcXdgToplevelSetTitle               = uint32(2)
+	opcXdgToplevelSetAppID               = uint32(3)
+	opcXdgToplevelSetMinSize             = uint32(8)
+	opcWlSurfaceCommit                   = uint32(6)
+	opcWlSeatGetPointer                  = uint32(0)
+	opcWlSeatGetKeyboard                 = uint32(1)
 	opcZxdgDecorationMgrGetToplevelDecor = uint32(1)
 	opcZxdgToplevelDecorSetMode          = uint32(1)
-
-	// XKB format/flag vars (addressable equivalents of the constants below)
-	varXkbKeymapFormatTextV1   = xkbKeymapFormatTextV1
-	varXkbKeymapCompileNoFlags = xkbKeymapCompileNoFlags
 )
 
-// xkb_context_flags
-const xkbContextNoFlags = uint32(0)
-
-// xkb_keymap_format
-const xkbKeymapFormatTextV1 = uint32(1)
-
-// xkb_keymap_compile_flags
-const xkbKeymapCompileNoFlags = uint32(0)
-
-// xkb_state_component — XKB_STATE_MODS_EFFECTIVE = (1 << 2)
-const xkbStateModsEffective = uint32(1 << 2)
-
-// wl_pointer button state
+// XKB constants
 const (
-	wlPointerButtonStateReleased = uint32(0)
-	wlPointerButtonStatePressed  = uint32(1)
+	xkbContextNoFlags       = uint32(0)
+	xkbKeymapFormatTextV1   = uint32(1)
+	xkbKeymapCompileNoFlags = uint32(0)
+	xkbStateModsEffective   = uint32(1 << 2)
 )
 
-// wl_keyboard key state
-const (
-	wlKeyboardKeyStateReleased = uint32(0)
-	wlKeyboardKeyStatePressed  = uint32(1)
-)
-
-// wl_seat capability bits
-const (
-	wlSeatCapPointer  = uint32(1)
-	wlSeatCapKeyboard = uint32(2)
-)
-
-// wl_keyboard keymap format
-const wlKeyboardKeymapFormatXkbV1 = uint32(1)
-
-// Linux evdev button codes (used in wl_pointer button events)
-const (
-	btnLeft   = uint32(0x110)
-	btnRight  = uint32(0x111)
-	btnMiddle = uint32(0x112)
-	btnSide   = uint32(0x113)
-	btnExtra  = uint32(0x114)
-)
-
-// wl_pointer axis
-const (
-	wlPointerAxisVerticalScroll   = uint32(0)
-	wlPointerAxisHorizontalScroll = uint32(1)
-)
-
-// wl_fixed_t to float64 conversion: fixed point with 8 fractional bits.
-func wlFixedToFloat(v int32) float64 {
-	return float64(v) / 256.0
-}
+var varXkbKeymapFormatTextV1 = xkbKeymapFormatTextV1
