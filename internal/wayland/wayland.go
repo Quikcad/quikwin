@@ -50,8 +50,9 @@ type window struct {
 	minWidth, minHeight uint32
 	appID               string
 
-	ptrX, ptrY float64
-	ptrSerial  uint32
+	ptrX, ptrY    float64
+	ptrSerial     uint32
+	cursorSerial  uint32
 
 	dragging bool
 
@@ -450,6 +451,7 @@ func (w *window) setupPointerListeners() {
 	enterCB := func(data, ptr unsafe.Pointer, serial uint32, surf unsafe.Pointer, sx, sy int32) {
 		w.mu.Lock()
 		w.ptrSerial = serial
+		w.cursorSerial = serial
 		w.mu.Unlock()
 	}
 	leaveCB := func(data, ptr unsafe.Pointer, serial uint32, surf unsafe.Pointer) {}
@@ -569,7 +571,7 @@ func (w *window) SetCursor(shape wtypes.CursorShape) {
 	w.mu.Lock()
 	w.cursorShape = shape
 	hidden := w.cursorHidden
-	serial := w.ptrSerial
+	serial := w.cursorSerial
 	w.mu.Unlock()
 	if hidden || w.cursorShapeDev == nil {
 		return
@@ -581,7 +583,7 @@ func (w *window) SetCursor(shape wtypes.CursorShape) {
 func (w *window) HideCursor() {
 	w.mu.Lock()
 	w.cursorHidden = true
-	serial := w.ptrSerial
+	serial := w.cursorSerial
 	w.mu.Unlock()
 	if w.pointer == nil {
 		return
@@ -593,7 +595,7 @@ func (w *window) HideCursor() {
 func (w *window) ShowCursor() {
 	w.mu.Lock()
 	w.cursorHidden = false
-	serial := w.ptrSerial
+	serial := w.cursorSerial
 	shape := w.cursorShape
 	w.mu.Unlock()
 	if w.cursorShapeDev == nil {
