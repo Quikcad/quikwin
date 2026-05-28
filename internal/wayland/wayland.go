@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/Quikcad/quikwin/internal/wtypes"
@@ -55,6 +56,11 @@ type window struct {
 	cursorSerial  uint32
 
 	dragging bool
+
+	// Key repeat state
+	repeatRate  int32 // characters per second (0 = disabled)
+	repeatDelay int32 // milliseconds before repeat starts
+	repeatStop  chan struct{}
 
 	onResize      func(uint32, uint32)
 	onLiveResize  func()
@@ -385,11 +391,15 @@ func (w *window) setupKeyboardListeners() {
 		}
 	}
 	leaveCB := func(data, kb unsafe.Pointer, serial uint32, surf unsafe.Pointer) {
+		w.stopRepeat()
 		if fn := w.onFocus; fn != nil {
 			fn(false)
 		}
 	}
 	keyCB := func(data, kb unsafe.Pointer, serial, time, key, state uint32) {
+		// Stop any existing key repeat.
+		w.stopRepeat()
+
 		xkbKeycode := key + 8
 		w.mu.Lock()
 		xkbState := w.xkbState
@@ -410,14 +420,15 @@ func (w *window) setupKeyboardListeners() {
 			fn(k, action, mods)
 		}
 		if wl.KeyboardKeyState(state) == wl.KeyboardKeyStatePressed {
-			if fn := w.onChar; fn != nil {
-				var cp uint32
-				ffi.CallFunction(&cifXkbStateKeyGetUtf32, _xkbStateKeyGetUtf32, unsafe.Pointer(&cp),
-					[]unsafe.Pointer{unsafe.Pointer(&xkbState), unsafe.Pointer(&xkbKeycode)})
-				if cp >= 32 && cp != 127 {
+			var cp uint32
+			ffi.CallFunction(&cifXkbStateKeyGetUtf32, _xkbStateKeyGetUtf32, unsafe.Pointer(&cp),
+				[]unsafe.Pointer{unsafe.Pointer(&xkbState), unsafe.Pointer(&xkbKeycode)})
+			if cp >= 32 && cp != 127 {
+				if fn := w.onChar; fn != nil {
 					fn(rune(cp))
 				}
 			}
+			w.startRepeat(k, rune(cp), mods)
 		}
 	}
 	modCB := func(data, kb unsafe.Pointer, serial, depressed, latched, locked, group uint32) {
@@ -436,7 +447,12 @@ func (w *window) setupKeyboardListeners() {
 				unsafe.Pointer(&group), unsafe.Pointer(&group), unsafe.Pointer(&group),
 			})
 	}
-	repeatInfoCB := func(data, kb unsafe.Pointer, rate, delay int32) {}
+	repeatInfoCB := func(data, kb unsafe.Pointer, rate, delay int32) {
+		w.mu.Lock()
+		w.repeatRate = rate
+		w.repeatDelay = delay
+		w.mu.Unlock()
+	}
 
 	w.keyboardListener[0] = ffi.NewCallback(keymapCB)
 	w.keyboardListener[1] = ffi.NewCallback(enterCB)
@@ -445,6 +461,61 @@ func (w *window) setupKeyboardListeners() {
 	w.keyboardListener[4] = ffi.NewCallback(modCB)
 	w.keyboardListener[5] = ffi.NewCallback(repeatInfoCB)
 	addListener(w.keyboard, &w.keyboardListener[0], unsafe.Pointer(w))
+}
+
+// stopRepeat cancels any running key repeat goroutine.
+func (w *window) stopRepeat() {
+	if w.repeatStop != nil {
+		close(w.repeatStop)
+		w.repeatStop = nil
+	}
+}
+
+// startRepeat begins key repeat for the given key and character.
+func (w *window) startRepeat(k wtypes.Key, ch rune, mods wtypes.Mod) {
+	w.mu.Lock()
+	rate := w.repeatRate
+	delay := w.repeatDelay
+	w.mu.Unlock()
+	if rate <= 0 {
+		return
+	}
+
+	stop := make(chan struct{})
+	w.repeatStop = stop
+
+	interval := time.Second / time.Duration(rate)
+
+	go func() {
+		timer := time.NewTimer(time.Duration(delay) * time.Millisecond)
+		defer timer.Stop()
+
+		select {
+		case <-stop:
+			return
+		case <-timer.C:
+		}
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			if fn := w.onKey; fn != nil {
+				fn(k, wtypes.Repeat, mods)
+			}
+			if ch >= 32 && ch != 127 {
+				if fn := w.onChar; fn != nil {
+					fn(ch)
+				}
+			}
+
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 func (w *window) setupPointerListeners() {
@@ -626,6 +697,7 @@ func (w *window) SetSize(sw, sh uint32) {
 }
 
 func (w *window) Destroy() {
+	w.stopRepeat()
 	w.mu.Lock()
 	if w.destroyed {
 		w.mu.Unlock()
