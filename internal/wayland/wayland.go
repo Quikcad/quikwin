@@ -84,6 +84,9 @@ type window struct {
 	pointerListener       [9]uintptr
 	toplevelDecorListener [1]uintptr
 
+	cursorHidden bool
+	cursorShape  wtypes.CursorShape
+
 	shouldClose bool
 	destroyed   bool
 }
@@ -663,12 +666,38 @@ func (w *window) SetTitle(title string) {
 }
 
 func (w *window) SetCursor(shape wtypes.CursorShape) {
+	w.mu.Lock()
+	w.cursorShape = shape
+	hidden := w.cursorHidden
+	serial := w.ptrSerial
+	w.mu.Unlock()
+	if hidden || w.cursorDev == nil {
+		return
+	}
+	w.cursorDev.SetShape(serial, cursorShapeMap(shape))
+}
+
+func (w *window) HideCursor() {
+	w.mu.Lock()
+	w.cursorHidden = true
+	serial := w.ptrSerial
+	w.mu.Unlock()
+	if w.pointer == nil {
+		return
+	}
+	wlPointerSetCursorNull(w.pointer, serial)
+	wlDisplayFlush(w.display)
+}
+
+func (w *window) ShowCursor() {
+	w.mu.Lock()
+	w.cursorHidden = false
+	serial := w.ptrSerial
+	shape := w.cursorShape
+	w.mu.Unlock()
 	if w.cursorDev == nil {
 		return
 	}
-	w.mu.Lock()
-	serial := w.ptrSerial
-	w.mu.Unlock()
 	w.cursorDev.SetShape(serial, cursorShapeMap(shape))
 }
 
@@ -1148,6 +1177,26 @@ func zxdgToplevelDecorSetMode(decor unsafe.Pointer, mode uint32) {
 		[]unsafe.Pointer{
 			unsafe.Pointer(&decor),
 			unsafe.Pointer(&opcZxdgToplevelDecorSetMode),
+			unsafe.Pointer(&argsPtr),
+		})
+}
+
+func wlPointerSetCursorNull(pointer unsafe.Pointer, serial uint32) {
+	args := [4]wlArgument{
+		wlArgUint(serial),
+		{}, // NULL surface
+		wlArgUint(0),
+		wlArgUint(0),
+	}
+	var pin runtime.Pinner
+	pin.Pin(&args[0])
+	defer pin.Unpin()
+	argsPtr := unsafe.Pointer(&args[0])
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&pointer),
+			unsafe.Pointer(&opcWlPointerSetCursor),
 			unsafe.Pointer(&argsPtr),
 		})
 }

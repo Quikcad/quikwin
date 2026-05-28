@@ -85,6 +85,7 @@ const (
 	wmMoving       = uint32(0x0216)
 	wmEnterSizeMove = uint32(0x0231)
 	wmExitSizeMove  = uint32(0x0232)
+	wmSetCursor     = uint32(0x0020)
 	wmNcCalcSize    = uint32(0x0083)
 
 	// SetWindowPos flags
@@ -141,6 +142,9 @@ type window struct {
 	onDragMove    func(float64, float64)
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
+
+	cursorHidden bool
+	cursorShape  wtypes.CursorShape
 
 	shouldClose bool
 	destroyed   bool
@@ -411,6 +415,27 @@ func (w *window) handleMessage(msg uint32, wParam uint64, lParam int64) (int64, 
 			fn(paths)
 		}
 		return 0, true
+
+	case wmSetCursor:
+		if lParam&0xffff == 1 { // HTCLIENT
+			w.mu.Lock()
+			hidden := w.cursorHidden
+			shape := w.cursorShape
+			w.mu.Unlock()
+			if hidden {
+				var result unsafe.Pointer
+				var null unsafe.Pointer
+				ffi.CallFunction(&cifSetCursor, _SetCursor, unsafe.Pointer(&result),
+					[]unsafe.Pointer{unsafe.Pointer(&null)})
+			} else {
+				id := win32CursorID(shape)
+				cursor := loadCursor(nil, id)
+				var result unsafe.Pointer
+				ffi.CallFunction(&cifSetCursor, _SetCursor, unsafe.Pointer(&result),
+					[]unsafe.Pointer{unsafe.Pointer(&cursor)})
+			}
+			return 1, true
+		}
 	}
 	return 0, false
 }
@@ -468,6 +493,35 @@ func (w *window) SetTitle(title string) {
 }
 
 func (w *window) SetCursor(shape wtypes.CursorShape) {
+	w.mu.Lock()
+	w.cursorShape = shape
+	hidden := w.cursorHidden
+	w.mu.Unlock()
+	if hidden {
+		return
+	}
+	id := win32CursorID(shape)
+	cursor := loadCursor(nil, id)
+	var result unsafe.Pointer
+	ffi.CallFunction(&cifSetCursor, _SetCursor, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&cursor)})
+}
+
+func (w *window) HideCursor() {
+	w.mu.Lock()
+	w.cursorHidden = true
+	w.mu.Unlock()
+	var result unsafe.Pointer
+	var null unsafe.Pointer
+	ffi.CallFunction(&cifSetCursor, _SetCursor, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&null)})
+}
+
+func (w *window) ShowCursor() {
+	w.mu.Lock()
+	w.cursorHidden = false
+	shape := w.cursorShape
+	w.mu.Unlock()
 	id := win32CursorID(shape)
 	cursor := loadCursor(nil, id)
 	var result unsafe.Pointer

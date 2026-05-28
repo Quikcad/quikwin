@@ -61,6 +61,8 @@ var (
 	selSetFrameOrigin                 unsafe.Pointer
 	selSetLayer                       unsafe.Pointer
 	selSetContentsScale               unsafe.Pointer
+	selHide                           unsafe.Pointer
+	selUnhide                         unsafe.Pointer
 
 	selsOnce sync.Once
 )
@@ -116,6 +118,8 @@ func initSels() {
 		selSetFrameOrigin = reg("setFrameOrigin:")
 		selSetLayer = reg("setLayer:")
 		selSetContentsScale = reg("setContentsScale:")
+		selHide = reg("hide")
+		selUnhide = reg("unhide")
 	})
 }
 
@@ -522,6 +526,8 @@ type window struct {
 	onDragMove    func(float64, float64)
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
+
+	cursorHidden bool
 }
 
 func New(cfg *wtypes.Config) (*window, error) {
@@ -787,6 +793,24 @@ func (w *window) SetSize(sw, sh uint32) {
 }
 
 func (w *window) SetCursor(_ wtypes.CursorShape) {}
+
+func (w *window) HideCursor() {
+	if w.cursorHidden {
+		return
+	}
+	w.cursorHidden = true
+	cls := getClass("NSCursor")
+	msgSend0(cls, selHide)
+}
+
+func (w *window) ShowCursor() {
+	if !w.cursorHidden {
+		return
+	}
+	w.cursorHidden = false
+	cls := getClass("NSCursor")
+	msgSend0(cls, selUnhide)
+}
 
 func (w *window) BeginDrag() {}
 

@@ -158,6 +158,10 @@ type window struct {
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
 
+	cursorHidden bool
+	cursorShape  wtypes.CursorShape
+	blankCursor  uint64
+
 	shouldClose bool
 	destroyed   bool
 }
@@ -365,10 +369,47 @@ func (w *window) SetTitle(title string) {
 }
 
 func (w *window) SetCursor(shape wtypes.CursorShape) {
+	w.mu.Lock()
+	w.cursorShape = shape
+	hidden := w.cursorHidden
+	w.mu.Unlock()
+	if hidden {
+		return
+	}
 	id := xfontCursorID(shape)
 	cursor := xCreateFontCursor(w.dpy, id)
 	xDefineCursor(w.dpy, w.win, cursor)
 	xFlush(w.dpy)
+}
+
+func (w *window) HideCursor() {
+	w.mu.Lock()
+	w.cursorHidden = true
+	w.mu.Unlock()
+	w.ensureBlankCursor()
+	xDefineCursor(w.dpy, w.win, w.blankCursor)
+	xFlush(w.dpy)
+}
+
+func (w *window) ShowCursor() {
+	w.mu.Lock()
+	w.cursorHidden = false
+	shape := w.cursorShape
+	w.mu.Unlock()
+	id := xfontCursorID(shape)
+	cursor := xCreateFontCursor(w.dpy, id)
+	xDefineCursor(w.dpy, w.win, cursor)
+	xFlush(w.dpy)
+}
+
+func (w *window) ensureBlankCursor() {
+	if w.blankCursor != 0 {
+		return
+	}
+	pixmap := xCreatePixmap(w.dpy, w.win, 1, 1, 1)
+	var color [16]byte // XColor zeroed = black, all zeros
+	w.blankCursor = xCreatePixmapCursor(w.dpy, pixmap, pixmap, unsafe.Pointer(&color[0]), unsafe.Pointer(&color[0]), 0, 0)
+	xFreePixmap(w.dpy, pixmap)
 }
 
 func (w *window) SetMinSize(mw, mh uint32) {
@@ -865,6 +906,32 @@ func xFlush(dpy unsafe.Pointer) {
 	var result int32
 	ffi.CallFunction(&cifXFlush, _XFlush, unsafe.Pointer(&result),
 		[]unsafe.Pointer{unsafe.Pointer(&dpy)})
+}
+
+func xCreatePixmap(dpy unsafe.Pointer, drawable uint64, width, height, depth uint32) uint64 {
+	var result uint64
+	ffi.CallFunction(&cifXCreatePixmap, _XCreatePixmap, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&dpy), unsafe.Pointer(&drawable), unsafe.Pointer(&width), unsafe.Pointer(&height), unsafe.Pointer(&depth)})
+	return result
+}
+
+func xCreatePixmapCursor(dpy unsafe.Pointer, source, mask uint64, fg, bg unsafe.Pointer, x, y uint32) uint64 {
+	var result uint64
+	ffi.CallFunction(&cifXCreatePixmapCursor, _XCreatePixmapCursor, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&dpy), unsafe.Pointer(&source), unsafe.Pointer(&mask), fg, bg, unsafe.Pointer(&x), unsafe.Pointer(&y)})
+	return result
+}
+
+func xFreePixmap(dpy unsafe.Pointer, pixmap uint64) {
+	var result int32
+	ffi.CallFunction(&cifXFreePixmap, _XFreePixmap, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&dpy), unsafe.Pointer(&pixmap)})
+}
+
+func xFreeCursor(dpy unsafe.Pointer, cursor uint64) {
+	var result int32
+	ffi.CallFunction(&cifXFreeCursor, _XFreeCursor, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&dpy), unsafe.Pointer(&cursor)})
 }
 
 func xMoveWindow(dpy unsafe.Pointer, win uint64, x, y int32) {

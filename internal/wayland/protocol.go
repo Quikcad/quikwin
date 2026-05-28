@@ -328,6 +328,7 @@ var (
 	opcWlSeatGetPointer                  = uint32(0)
 	opcWlSeatGetKeyboard                 = uint32(1)
 	opcZxdgDecorationMgrGetToplevelDecor = uint32(1)
+	opcWlPointerSetCursor                = uint32(0)
 	opcZxdgToplevelDecorSetMode          = uint32(1)
 )
 

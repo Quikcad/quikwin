@@ -47,7 +47,11 @@ var (
 	_XChangeProperty     unsafe.Pointer
 	_XGetWindowProperty  unsafe.Pointer
 	_XConvertSelection   unsafe.Pointer
-	_XGetDefault         unsafe.Pointer
+	_XGetDefault            unsafe.Pointer
+	_XCreatePixmap          unsafe.Pointer
+	_XCreatePixmapCursor    unsafe.Pointer
+	_XFreePixmap            unsafe.Pointer
+	_XFreeCursor            unsafe.Pointer
 
 	// call interfaces
 	cifXOpenDisplay        types.CallInterface
@@ -79,7 +83,11 @@ var (
 	cifXChangeProperty     types.CallInterface
 	cifXGetWindowProperty  types.CallInterface
 	cifXConvertSelection   types.CallInterface
-	cifXGetDefault         types.CallInterface
+	cifXGetDefault            types.CallInterface
+	cifXCreatePixmap          types.CallInterface
+	cifXCreatePixmapCursor    types.CallInterface
+	cifXFreePixmap            types.CallInterface
+	cifXFreeCursor            types.CallInterface
 )
 
 var (
@@ -152,6 +160,10 @@ func loadSymbols() error {
 		{&_XGetWindowProperty, "XGetWindowProperty"},
 		{&_XConvertSelection, "XConvertSelection"},
 		{&_XGetDefault, "XGetDefault"},
+		{&_XCreatePixmap, "XCreatePixmap"},
+		{&_XCreatePixmapCursor, "XCreatePixmapCursor"},
+		{&_XFreePixmap, "XFreePixmap"},
+		{&_XFreeCursor, "XFreeCursor"},
 	} {
 		if *p.dst, err = sym(p.name); err != nil {
 			return err
@@ -227,6 +239,14 @@ func prepareCIFs() error {
 		{&cifXConvertSelection, _i32, []*types.TypeDescriptor{_ptr, _u64, _u64, _u64, _u64, _u64}},
 		// XGetDefault(ptr, ptr, ptr) → ptr
 		{&cifXGetDefault, _ptr, []*types.TypeDescriptor{_ptr, _ptr, _ptr}},
+		// XCreatePixmap(display, drawable, width, height, depth) → u64
+		{&cifXCreatePixmap, _u64, []*types.TypeDescriptor{_ptr, _u64, _u32, _u32, _u32}},
+		// XCreatePixmapCursor(display, source, mask, fg, bg, x, y) → u64
+		{&cifXCreatePixmapCursor, _u64, []*types.TypeDescriptor{_ptr, _u64, _u64, _ptr, _ptr, _u32, _u32}},
+		// XFreePixmap(display, pixmap) → i32
+		{&cifXFreePixmap, _i32, []*types.TypeDescriptor{_ptr, _u64}},
+		// XFreeCursor(display, cursor) → i32
+		{&cifXFreeCursor, _i32, []*types.TypeDescriptor{_ptr, _u64}},
 	} {
 		if err := ffi.PrepareCallInterface(e.cif, types.DefaultCall, e.ret, e.args); err != nil {
 			return fmt.Errorf("quikwin/x11: PrepareCallInterface: %w", err)

@@ -12,6 +12,8 @@ type Window interface {
 	// Appearance
 	SetTitle(title string)
 	SetCursor(shape CursorShape)
+	HideCursor()
+	ShowCursor()
 	SetMinSize(w, h uint32)
 	SetSize(w, h uint32)
 
