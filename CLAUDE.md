@@ -26,6 +26,12 @@ Provides idiomatic Go windowing for Vulkan applications. Exposes `VkSurface()` s
 
 ## Conventions
 
+- API boundaries use `float64`. `float32` only for GPU uploads.
+- Angles are radians.
+- Value receivers for small fixed-size types; pointer receivers for large/mutable state.
+- Place uncommented compile-time interface checks directly above the type definition. Use a `var` block for multiple checks, a standalone `var` for a single check.
+- Always expand struct definitions across multiple lines, even with a single field.
+- Factories that make value types are called `Make*`; factories that return pointers are called `New*`.
 - No global state.
 - Callbacks registered with `OnX` replace any previous callback (no multi-listener lists).
 - `PollEvents` is non-blocking; the caller drives the loop.

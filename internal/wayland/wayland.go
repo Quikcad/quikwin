@@ -93,16 +93,16 @@ type globalEntry struct {
 	version uint32
 }
 
-func New(title string, width, height, minWidth, minHeight uint32) (*window, error) {
+func New(cfg *wtypes.Config) (*window, error) {
 	if err := ensureLoaded(); err != nil {
 		return nil, err
 	}
 
 	w := &window{
-		width:     width,
-		height:    height,
-		minWidth:  minWidth,
-		minHeight: minHeight,
+		width:     cfg.Width,
+		height:    cfg.Height,
+		minWidth:  cfg.MinWidth,
+		minHeight: cfg.MinHeight,
 		globals:   make(map[string]globalEntry),
 	}
 
@@ -146,9 +146,23 @@ func New(title string, width, height, minWidth, minHeight uint32) (*window, erro
 		}
 	}
 
-	xdgToplevelSetTitle(w.xdgToplevel, title)
-	if minWidth > 0 || minHeight > 0 {
-		xdgToplevelSetMinSize(w.xdgToplevel, int32(minWidth), int32(minHeight))
+	xdgToplevelSetTitle(w.xdgToplevel, cfg.Title)
+	if cfg.MinWidth > 0 || cfg.MinHeight > 0 {
+		xdgToplevelSetMinSize(w.xdgToplevel, int32(cfg.MinWidth), int32(cfg.MinHeight))
+	}
+
+	// Wayland has no direct resizable flag. To prevent resizing, set
+	// max_size equal to the requested size so the compositor won't
+	// offer a resize handle.
+	if !cfg.Resizable {
+		xdgToplevelSetMaxSize(w.xdgToplevel, int32(cfg.Width), int32(cfg.Height))
+		xdgToplevelSetMinSize(w.xdgToplevel, int32(cfg.Width), int32(cfg.Height))
+	}
+
+	// Decorations: if the compositor supports xdg-decoration, request
+	// server-side (decorated) or client-side (undecorated).
+	if !cfg.Decorated && w.toplevelDecor != nil {
+		zxdgToplevelDecorSetMode(w.toplevelDecor, uint32(xdgdeco.ToplevelDecorationV1ModeClientSide))
 	}
 
 	wlSurfaceCommit(w.surface)
@@ -1031,6 +1045,23 @@ func xdgToplevelSetMinSize(tl unsafe.Pointer, w, h int32) {
 		[]unsafe.Pointer{
 			unsafe.Pointer(&tl),
 			unsafe.Pointer(&opcXdgToplevelSetMinSize),
+			unsafe.Pointer(&argsPtr),
+		})
+}
+
+func xdgToplevelSetMaxSize(tl unsafe.Pointer, w, h int32) {
+	args := [2]wlArgument{}
+	*(*int32)(unsafe.Pointer(&args[0][0])) = w
+	*(*int32)(unsafe.Pointer(&args[1][0])) = h
+	var pin runtime.Pinner
+	pin.Pin(&args[0])
+	defer pin.Unpin()
+	argsPtr := unsafe.Pointer(&args[0])
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&tl),
+			unsafe.Pointer(&opcXdgToplevelSetMaxSize),
 			unsafe.Pointer(&argsPtr),
 		})
 }

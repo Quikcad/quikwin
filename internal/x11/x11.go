@@ -50,9 +50,16 @@ func (a *xWindowAttributes) y() int32 { return *(*int32)(unsafe.Pointer(&a[4])) 
 type xSizeHints [76]byte
 
 func (h *xSizeHints) setMinSize(w, height int32) {
-	*(*int64)(unsafe.Pointer(&h[0])) = 1 << 4  // PMinSize flag
+	*(*int64)(unsafe.Pointer(&h[0])) |= 1 << 4 // PMinSize flag
 	*(*int32)(unsafe.Pointer(&h[24])) = w
 	*(*int32)(unsafe.Pointer(&h[28])) = height
+}
+
+// max_w offset=32, max_h offset=36
+func (h *xSizeHints) setMaxSize(w, height int32) {
+	*(*int64)(unsafe.Pointer(&h[0])) |= 1 << 5 // PMaxSize flag
+	*(*int32)(unsafe.Pointer(&h[32])) = w
+	*(*int32)(unsafe.Pointer(&h[36])) = height
 }
 
 // X11 event type constants
@@ -156,7 +163,7 @@ type window struct {
 }
 
 // New creates an X11 window.
-func New(title string, width, height, minWidth, minHeight uint32) (*window, error) {
+func New(cfg *wtypes.Config) (*window, error) {
 	if err := ensureLoaded(); err != nil {
 		return nil, err
 	}
@@ -167,29 +174,39 @@ func New(title string, width, height, minWidth, minHeight uint32) (*window, erro
 	}
 
 	root := xDefaultRootWindow(dpy)
-	win := xCreateSimpleWindow(dpy, root, 0, 0, width, height, 0, 0, 0)
+	win := xCreateSimpleWindow(dpy, root, 0, 0, cfg.Width, cfg.Height, 0, 0, 0)
 
 	w := &window{
 		dpy:       dpy,
 		win:       win,
-		width:     width,
-		height:    height,
-		minWidth:  minWidth,
-		minHeight: minHeight,
+		width:     cfg.Width,
+		height:    cfg.Height,
+		minWidth:  cfg.MinWidth,
+		minHeight: cfg.MinHeight,
 	}
 
 	w.internAtoms()
 	w.setupWMProtocols()
 	w.setXdndAware()
-	if minWidth > 0 || minHeight > 0 {
+	if cfg.MinWidth > 0 || cfg.MinHeight > 0 {
 		w.applyMinSize()
+	}
+
+	// Prevent resizing by setting min=max in XSizeHints.
+	if !cfg.Resizable {
+		w.applySizeConstraints(cfg.Width, cfg.Height)
+	}
+
+	// Remove decorations via _MOTIF_WM_HINTS.
+	if !cfg.Decorated {
+		w.setUndecorated()
 	}
 
 	eventMask := keyPressMask | keyReleaseMask | buttonPressMask | buttonReleaseMask |
 		pointerMotionMask | structureNotifyMask | focusChangeMask
 	xSelectInput(dpy, win, eventMask)
 
-	xStoreName(dpy, win, title)
+	xStoreName(dpy, win, cfg.Title)
 	xMapWindow(dpy, win)
 	xFlush(dpy)
 
@@ -258,6 +275,44 @@ func (w *window) applyMinSize() {
 	defer pin.Unpin()
 	ffi.CallFunction(&cifXSetWMNormalHints, _XSetWMNormalHints, nil,
 		[]unsafe.Pointer{unsafe.Pointer(&w.dpy), unsafe.Pointer(&w.win), unsafe.Pointer(&hints)})
+}
+
+// applySizeConstraints sets both min and max size to the same value,
+// preventing the window manager from allowing resize.
+func (w *window) applySizeConstraints(width, height uint32) {
+	var hints xSizeHints
+	hints.setMinSize(int32(width), int32(height))
+	hints.setMaxSize(int32(width), int32(height))
+	var pin runtime.Pinner
+	pin.Pin(&hints)
+	defer pin.Unpin()
+	ffi.CallFunction(&cifXSetWMNormalHints, _XSetWMNormalHints, nil,
+		[]unsafe.Pointer{unsafe.Pointer(&w.dpy), unsafe.Pointer(&w.win), unsafe.Pointer(&hints)})
+}
+
+// setUndecorated removes window manager decorations via _MOTIF_WM_HINTS.
+func (w *window) setUndecorated() {
+	atom := internAtomRaw(w.dpy, "_MOTIF_WM_HINTS")
+	// MotifWmHints: flags, functions, decorations, input_mode, status (5 × uint64)
+	hints := [5]uint64{
+		1 << 1, // MWM_HINTS_DECORATIONS
+		0,
+		0, // decorations = none
+		0,
+		0,
+	}
+	var pin runtime.Pinner
+	pin.Pin(&hints)
+	defer pin.Unpin()
+	n := int32(5)
+	var result int32
+	ffi.CallFunction(&cifXChangeProperty, _XChangeProperty, unsafe.Pointer(&result),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&w.dpy), unsafe.Pointer(&w.win),
+			unsafe.Pointer(&atom), unsafe.Pointer(&atom),
+			unsafe.Pointer(&i32_32_), unsafe.Pointer(&propModeReplace_),
+			unsafe.Pointer(&hints), unsafe.Pointer(&n),
+		})
 }
 
 // ─── window.Window interface ──────────────────────────────────────────────────

@@ -322,6 +322,7 @@ var (
 	opcXdgSurfaceAckConfigure            = uint32(4)
 	opcXdgToplevelSetTitle               = uint32(2)
 	opcXdgToplevelSetAppID               = uint32(3)
+	opcXdgToplevelSetMaxSize             = uint32(7)
 	opcXdgToplevelSetMinSize             = uint32(8)
 	opcWlSurfaceCommit                   = uint32(6)
 	opcWlSeatGetPointer                  = uint32(0)

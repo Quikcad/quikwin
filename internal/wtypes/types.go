@@ -123,6 +123,16 @@ const (
 	Button5
 )
 
+// Config holds window creation parameters shared between the common
+// package and platform backends.
+type Config struct {
+	Title               string
+	Width, Height       uint32
+	MinWidth, MinHeight uint32
+	Resizable           bool
+	Decorated           bool
+}
+
 type CursorShape uint8
 
 const (

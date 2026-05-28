@@ -524,7 +524,7 @@ type window struct {
 	onDrop        func([]string)
 }
 
-func New(title string, width, height, minW, minH uint32) (*window, error) {
+func New(cfg *wtypes.Config) (*window, error) {
 	if err := ensureLoaded(); err != nil {
 		return nil, err
 	}
@@ -534,8 +534,16 @@ func New(title string, width, height, minW, minH uint32) (*window, error) {
 
 	runtime.LockOSThread()
 
-	style := nsWindowStyleMaskTitled | nsWindowStyleMaskClosable |
-		nsWindowStyleMaskMiniaturizable | nsWindowStyleMaskResizable
+	width, height := cfg.Width, cfg.Height
+	minW, minH := cfg.MinWidth, cfg.MinHeight
+
+	style := nsWindowStyleMaskClosable | nsWindowStyleMaskMiniaturizable
+	if cfg.Decorated {
+		style |= nsWindowStyleMaskTitled
+	}
+	if cfg.Resizable {
+		style |= nsWindowStyleMaskResizable
+	}
 
 	nsCls := getClass("NSWindow")
 	raw := msgSend0(nsCls, selAlloc)
@@ -547,7 +555,7 @@ func New(title string, width, height, minW, minH uint32) (*window, error) {
 	}
 
 	msgSend1bVoid(nswin, selSetReleasedWhenClosed, 0)
-	msgSend1pVoid(nswin, selSetTitle, nsString(title))
+	msgSend1pVoid(nswin, selSetTitle, nsString(cfg.Title))
 
 	if minW > 0 || minH > 0 {
 		msgSend2fVoid(nswin, selSetMinSize, float64(minW), float64(minH))

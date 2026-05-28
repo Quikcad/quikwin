@@ -41,7 +41,14 @@ type wndClassExW struct {
 
 const (
 	// Window styles
-	wsOverlappedWindow = uint32(0x00CF0000)
+	wsOverlappedWindow = uint32(0x00CF0000) // WS_OVERLAPPED|CAPTION|SYSMENU|THICKFRAME|MINIMIZEBOX|MAXIMIZEBOX
+	wsOverlapped       = uint32(0x00000000)
+	wsCaption          = uint32(0x00C00000)
+	wsSysMenu          = uint32(0x00080000)
+	wsThickFrame       = uint32(0x00040000)
+	wsMinimizeBox      = uint32(0x00020000)
+	wsMaximizeBox      = uint32(0x00010000)
+	wsPopup            = uint32(0x80000000)
 	wsVisible          = uint32(0x10000000)
 
 	// ShowWindow commands
@@ -140,7 +147,7 @@ type window struct {
 }
 
 // New creates a Win32 window.
-func New(title string, width, height, minWidth, minHeight uint32) (*window, error) {
+func New(cfg *wtypes.Config) (*window, error) {
 	if err := ensureLoaded(); err != nil {
 		return nil, err
 	}
@@ -151,7 +158,7 @@ func New(title string, width, height, minWidth, minHeight uint32) (*window, erro
 	}
 
 	hInst := getModuleHandle(nil)
-	titleW := utf16Ptr(title)
+	titleW := utf16Ptr(cfg.Title)
 	classW := utf16Ptr("QuikwinWindow")
 
 	var pin runtime.Pinner
@@ -159,15 +166,24 @@ func New(title string, width, height, minWidth, minHeight uint32) (*window, erro
 	pin.Pin(classW)
 	defer pin.Unpin()
 
-	w := int32(width)
-	h := int32(height)
+	// Build window style based on config.
+	style := wsOverlapped | wsCaption | wsSysMenu | wsMinimizeBox
+	if cfg.Resizable {
+		style |= wsThickFrame | wsMaximizeBox
+	}
+	if !cfg.Decorated {
+		style = wsPopup
+	}
+
+	w := int32(cfg.Width)
+	h := int32(cfg.Height)
 	var hwnd unsafe.Pointer
 	ffi.CallFunction(&cifCreateWindowExW, _CreateWindowExW, unsafe.Pointer(&hwnd),
 		[]unsafe.Pointer{
 			pU32(0),                        // exStyle
 			unsafe.Pointer(classW),         // className
 			unsafe.Pointer(titleW),         // title
-			pU32(wsOverlappedWindow),        // style
+			pU32(style),                    // style
 			pI32(-0x80000000),              // x = CW_USEDEFAULT
 			pI32(-0x80000000),              // y
 			unsafe.Pointer(&w),
@@ -183,10 +199,10 @@ func New(title string, width, height, minWidth, minHeight uint32) (*window, erro
 
 	win := &window{
 		hwnd:      hwnd,
-		width:     width,
-		height:    height,
-		minWidth:  minWidth,
-		minHeight: minHeight,
+		width:     cfg.Width,
+		height:    cfg.Height,
+		minWidth:  cfg.MinWidth,
+		minHeight: cfg.MinHeight,
 	}
 
 	wndProcMu.Lock()

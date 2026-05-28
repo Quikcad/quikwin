@@ -11,7 +11,7 @@ import (
 
 func newPlatform(cfg *Config) (any, error) {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
-		return wayland.New(cfg.Title, cfg.Width, cfg.Height, cfg.MinWidth, cfg.MinHeight)
+		return wayland.New(cfg)
 	}
-	return x11.New(cfg.Title, cfg.Width, cfg.Height, cfg.MinWidth, cfg.MinHeight)
+	return x11.New(cfg)
 }
