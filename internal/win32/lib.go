@@ -44,6 +44,8 @@ var (
 	_GetWindowLongPtrW  unsafe.Pointer
 	_AdjustWindowRect   unsafe.Pointer
 	_MoveWindow         unsafe.Pointer
+	_ReleaseCapture     unsafe.Pointer
+	_ScreenToClient     unsafe.Pointer
 
 	// kernel32
 	_GetModuleHandleW unsafe.Pointer
@@ -70,6 +72,8 @@ var (
 	cifMoveWindow          types.CallInterface
 	cifSetWindowLongPtrW   types.CallInterface
 	cifGetWindowLongPtrW   types.CallInterface
+	cifReleaseCapture      types.CallInterface
+	cifScreenToClient      types.CallInterface
 )
 
 var (
@@ -130,6 +134,8 @@ func loadSymbols() error {
 		{&_SetWindowLongPtrW, u, "SetWindowLongPtrW"},
 		{&_GetWindowLongPtrW, u, "GetWindowLongPtrW"},
 		{&_MoveWindow, u, "MoveWindow"},
+		{&_ReleaseCapture, u, "ReleaseCapture"},
+		{&_ScreenToClient, u, "ScreenToClient"},
 		{&_GetModuleHandleW, k, "GetModuleHandleW"},
 	} {
 		var err error
@@ -198,6 +204,10 @@ func prepareCIFs() error {
 		{&cifSetWindowLongPtrW, _i64, []*types.TypeDescriptor{_ptr, _i32, _i64}},
 		// GetWindowLongPtrW(HWND, index) → LONG_PTR
 		{&cifGetWindowLongPtrW, _i64, []*types.TypeDescriptor{_ptr, _i32}},
+		// ReleaseCapture() → BOOL
+		{&cifReleaseCapture, _i32, []*types.TypeDescriptor{}},
+		// ScreenToClient(HWND, *POINT) → BOOL
+		{&cifScreenToClient, _i32, []*types.TypeDescriptor{_ptr, _ptr}},
 	} {
 		if err := prep(e.cif, e.ret, e.args); err != nil {
 			return fmt.Errorf("quikwin/win32: PrepareCallInterface: %w", err)

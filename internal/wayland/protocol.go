@@ -311,6 +311,34 @@ var (
 	}
 )
 
+// wp_cursor_shape_manager_v1: 2 requests, 0 events
+var (
+	wpCursorShapeMgrMethods = [2]wlMessage{
+		{name: bstr("destroy"), signature: sigEmpty, types: nilTypes},
+		{name: bstr("get_pointer"), signature: sigNo, types: nilTypes},
+	}
+	ifaceWpCursorShapeManagerV1 = wlInterface{
+		name:        bstr("wp_cursor_shape_manager_v1"),
+		version:     1,
+		methodCount: 2,
+		methods:     &wpCursorShapeMgrMethods[0],
+	}
+)
+
+// wp_cursor_shape_device_v1: 2 requests, 0 events
+var (
+	wpCursorShapeDevMethods = [2]wlMessage{
+		{name: bstr("destroy"), signature: sigEmpty, types: nilTypes},
+		{name: bstr("set_shape"), signature: bstr("uu"), types: nilTypes},
+	}
+	ifaceWpCursorShapeDeviceV1 = wlInterface{
+		name:        bstr("wp_cursor_shape_device_v1"),
+		version:     1,
+		methodCount: 2,
+		methods:     &wpCursorShapeDevMethods[0],
+	}
+)
+
 // Wayland request opcodes.
 var (
 	opcWlDisplayGetRegistry              = uint32(1)
@@ -322,6 +350,7 @@ var (
 	opcXdgSurfaceAckConfigure            = uint32(4)
 	opcXdgToplevelSetTitle               = uint32(2)
 	opcXdgToplevelSetAppID               = uint32(3)
+	opcXdgToplevelMove                   = uint32(5)
 	opcXdgToplevelSetMaxSize             = uint32(7)
 	opcXdgToplevelSetMinSize             = uint32(8)
 	opcWlSurfaceCommit                   = uint32(6)
@@ -330,6 +359,8 @@ var (
 	opcZxdgDecorationMgrGetToplevelDecor = uint32(1)
 	opcWlPointerSetCursor                = uint32(0)
 	opcZxdgToplevelDecorSetMode          = uint32(1)
+	opcWpCursorShapeMgrGetPointer        = uint32(1)
+	opcWpCursorShapeDevSetShape          = uint32(1)
 )
 
 // XKB constants

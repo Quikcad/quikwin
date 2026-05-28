@@ -147,3 +147,10 @@ const (
 	CursorAllResize
 	CursorNotAllowed
 )
+
+type HitTestResult uint8
+
+const (
+	HitTestClient HitTestResult = iota
+	HitTestDrag
+)

@@ -38,4 +38,5 @@ type Window interface {
 	OnDragMove(fn func(x, y float64))
 	OnDragEnd(fn func(x, y float64))
 	OnDrop(fn func(paths []string))
+	OnHitTest(fn func(x, y float64) HitTestResult)
 }

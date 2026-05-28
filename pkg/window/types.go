@@ -3,11 +3,12 @@ package window
 import "github.com/Quikcad/quikwin/internal/wtypes"
 
 type (
-	Key         = wtypes.Key
-	Action      = wtypes.Action
-	Mod         = wtypes.Mod
-	Button      = wtypes.Button
-	CursorShape = wtypes.CursorShape
+	Key           = wtypes.Key
+	Action        = wtypes.Action
+	Mod           = wtypes.Mod
+	Button        = wtypes.Button
+	CursorShape   = wtypes.CursorShape
+	HitTestResult = wtypes.HitTestResult
 )
 
 const (
@@ -128,4 +129,7 @@ const (
 	CursorNESWResize = wtypes.CursorNESWResize
 	CursorAllResize  = wtypes.CursorAllResize
 	CursorNotAllowed = wtypes.CursorNotAllowed
+
+	HitTestClient = wtypes.HitTestClient
+	HitTestDrag   = wtypes.HitTestDrag
 )

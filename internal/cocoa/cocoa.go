@@ -63,6 +63,8 @@ var (
 	selSetContentsScale               unsafe.Pointer
 	selHide                           unsafe.Pointer
 	selUnhide                         unsafe.Pointer
+	selPerformWindowDragWithEvent     unsafe.Pointer
+	selCurrentEvent                   unsafe.Pointer
 
 	selsOnce sync.Once
 )
@@ -120,6 +122,8 @@ func initSels() {
 		selSetContentsScale = reg("setContentsScale:")
 		selHide = reg("hide")
 		selUnhide = reg("unhide")
+		selPerformWindowDragWithEvent = reg("performWindowDragWithEvent:")
+		selCurrentEvent = reg("currentEvent")
 	})
 }
 
@@ -526,6 +530,7 @@ type window struct {
 	onDragMove    func(float64, float64)
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
+	onHitTest     func(float64, float64) wtypes.HitTestResult
 
 	cursorHidden bool
 }
@@ -706,6 +711,14 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 		}
 
 	case nsEventTypeLeftMouseDown, nsEventTypeRightMouseDown, nsEventTypeOtherMouseDown:
+		if evType == nsEventTypeLeftMouseDown {
+			if fn := w.onHitTest; fn != nil {
+				if fn(w.mouseX, w.mouseY) == wtypes.HitTestDrag {
+					msgSend1pVoid(w.nswin, selPerformWindowDragWithEvent, event)
+					return
+				}
+			}
+		}
 		if fn := w.onMouseButton; fn != nil {
 			fn(mouseButton(evType, event), wtypes.Press, mods)
 		}
@@ -812,7 +825,12 @@ func (w *window) ShowCursor() {
 	msgSend0(cls, selUnhide)
 }
 
-func (w *window) BeginDrag() {}
+func (w *window) BeginDrag() {
+	event := msgSend0(nsApp, selCurrentEvent)
+	if event != nil {
+		msgSend1pVoid(w.nswin, selPerformWindowDragWithEvent, event)
+	}
+}
 
 func (w *window) Destroy() {
 	if w.closed.Swap(true) {
@@ -837,6 +855,7 @@ func (w *window) OnDragBegin(fn func(float64, float64))                       { 
 func (w *window) OnDragMove(fn func(float64, float64))                        { w.onDragMove = fn }
 func (w *window) OnDragEnd(fn func(float64, float64))                         { w.onDragEnd = fn }
 func (w *window) OnDrop(fn func([]string))                                    { w.onDrop = fn }
+func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult)   { w.onHitTest = fn }
 
 // ---------------------------------------------------------------------------
 // CocoaWindow interface methods

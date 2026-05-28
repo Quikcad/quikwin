@@ -13,10 +13,8 @@ import (
 	"github.com/go-webgpu/goffi/ffi"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
 	wl "github.com/lukem570/wayland-go/pkg/wayland"
-	cursorproto "github.com/lukem570/wayland-go/pkg/protocols/staging/cursorshapev1"
 	xdg "github.com/lukem570/wayland-go/pkg/protocols/stable/xdgshell"
 	xdgdeco "github.com/lukem570/wayland-go/pkg/protocols/unstable/xdgdecorationunstablev1"
-	"github.com/lukem570/wayland-go/pkg/wire"
 )
 
 type window struct {
@@ -35,11 +33,8 @@ type window struct {
 	pointer     unsafe.Pointer // wl_pointer*
 	decorMgr    unsafe.Pointer // zxdg_decoration_manager_v1*
 	toplevelDecor unsafe.Pointer // zxdg_toplevel_decoration_v1*
-
-	// Cursor shape via wayland-go (uses its own wire.Conn)
-	cursorConn *wire.Conn
-	cursorMgr  *cursorproto.ManagerV1
-	cursorDev  *cursorproto.DeviceV1
+	cursorShapeMgr unsafe.Pointer // wp_cursor_shape_manager_v1*
+	cursorShapeDev unsafe.Pointer // wp_cursor_shape_device_v1*
 
 	// XKB keyboard state
 	xkbCtx    unsafe.Pointer
@@ -73,6 +68,7 @@ type window struct {
 	onDragMove    func(float64, float64)
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
+	onHitTest     func(float64, float64) wtypes.HitTestResult
 
 	// Listener structs — must stay alive as long as the window lives.
 	registryListener      [2]uintptr
@@ -171,129 +167,7 @@ func New(cfg *wtypes.Config) (*window, error) {
 	wlSurfaceCommit(w.surface)
 	wlDisplayRoundtrip(w.display)
 
-	// Set up cursor shape protocol via wayland-go (separate connection).
-	w.initCursorShape()
-
 	return w, nil
-}
-
-// initCursorShape opens a second lightweight connection for the wp_cursor_shape_v1
-// protocol which is handled via wayland-go. The cursor shape protocol only sends
-// requests (set_shape) and never receives events, so no dispatch loop is needed.
-func (w *window) initCursorShape() {
-	conn, err := wire.Connect("")
-	if err != nil {
-		return
-	}
-	w.cursorConn = conn
-
-	display := wl.NewDisplay(conn, 1)
-	registry, err := display.GetRegistry()
-	if err != nil {
-		conn.Close()
-		w.cursorConn = nil
-		return
-	}
-
-	objects := wire.NewObjectMap()
-	objects.Register(registry.ID(), registry)
-
-	var cursorG, seatG struct {
-		name    uint32
-		version uint32
-	}
-
-	registry.SetHandler(&cursorRegistryHandler{
-		onGlobal: func(ev wl.RegistryGlobalEvent) {
-			switch ev.Interface {
-			case cursorproto.ManagerV1Name:
-				cursorG.name = ev.Name
-				cursorG.version = ev.Version
-			case wl.SeatName:
-				seatG.name = ev.Name
-				seatG.version = ev.Version
-			}
-		},
-	})
-
-	cb, err := display.Sync()
-	if err != nil {
-		conn.Close()
-		w.cursorConn = nil
-		return
-	}
-	objects.Register(cb.ID(), cb)
-	done := false
-	cb.SetHandler(&cursorCallbackHandler{flag: &done})
-	for !done {
-		id, op, data, err := conn.RecvEvent()
-		if err != nil {
-			conn.Close()
-			w.cursorConn = nil
-			return
-		}
-		objects.Dispatch(id, op, data)
-	}
-
-	if cursorG.name == 0 || seatG.name == 0 {
-		conn.Close()
-		w.cursorConn = nil
-		return
-	}
-
-	ver := min(cursorG.version, cursorproto.ManagerV1Version)
-	w.cursorMgr, err = cursorproto.BindManagerV1(conn, registry.ID(), cursorG.name, ver)
-	if err != nil {
-		conn.Close()
-		w.cursorConn = nil
-		return
-	}
-
-	// Bind seat to get a pointer ID for the cursor device.
-	seatVer := min(seatG.version, 5)
-	seat, err := wl.BindSeat(conn, registry.ID(), seatG.name, seatVer)
-	if err != nil {
-		conn.Close()
-		w.cursorConn = nil
-		return
-	}
-	objects.Register(seat.ID(), seat)
-
-	// Roundtrip to process seat bind.
-	cb, err = display.Sync()
-	if err != nil {
-		conn.Close()
-		w.cursorConn = nil
-		return
-	}
-	objects.Register(cb.ID(), cb)
-	done = false
-	cb.SetHandler(&cursorCallbackHandler{flag: &done})
-
-	var pointer *wl.Pointer
-	seat.SetHandler(&cursorSeatHandler{
-		onCaps: func(ev wl.SeatCapabilitiesEvent) {
-			if ev.Capabilities&wl.SeatCapabilityPointer != 0 {
-				pointer, _ = seat.GetPointer()
-			}
-		},
-	})
-
-	for !done {
-		id, op, data, err := conn.RecvEvent()
-		if err != nil {
-			conn.Close()
-			w.cursorConn = nil
-			return
-		}
-		objects.Dispatch(id, op, data)
-	}
-
-	if pointer == nil {
-		return
-	}
-
-	w.cursorDev, _ = w.cursorMgr.GetPointer(pointer.ID())
 }
 
 // --- Global registry ---
@@ -363,6 +237,18 @@ func (w *window) bindGlobals() error {
 			w.seat = p
 		}
 	}
+
+	if e, ok := w.globals["wp_cursor_shape_manager_v1"]; ok {
+		ver := e.version
+		if ver > 1 {
+			ver = 1
+		}
+		p := registryBind(w.registry, e.name, &ifaceWpCursorShapeManagerV1, ver)
+		if p != nil {
+			w.cursorShapeMgr = p
+		}
+	}
+
 	return nil
 }
 
@@ -438,6 +324,9 @@ func (w *window) setupSeatListeners() {
 		if c&wl.SeatCapabilityPointer != 0 && w.pointer == nil {
 			w.pointer = wlSeatGetPointer(seat)
 			w.setupPointerListeners()
+			if w.cursorShapeMgr != nil {
+				w.cursorShapeDev = wpCursorShapeMgrGetPointer(w.cursorShapeMgr, w.pointer)
+			}
 		}
 	}
 	seatNameCB := func(data, seat unsafe.Pointer, name *byte) {}
@@ -581,6 +470,9 @@ func (w *window) setupPointerListeners() {
 		}
 	}
 	buttonCB := func(data, ptr unsafe.Pointer, serial, time, btn, state uint32) {
+		w.mu.Lock()
+		w.ptrSerial = serial
+		w.mu.Unlock()
 		b, ok := evdevButton(btn)
 		if !ok {
 			return
@@ -598,6 +490,14 @@ func (w *window) setupPointerListeners() {
 				fn(w.ptrX, w.ptrY)
 			}
 			return
+		}
+		if action == wtypes.Press && b == wtypes.ButtonLeft {
+			if fn := w.onHitTest; fn != nil {
+				if fn(w.ptrX, w.ptrY) == wtypes.HitTestDrag {
+					xdgToplevelMove(w.xdgToplevel, w.seat, serial)
+					return
+				}
+			}
 		}
 		if fn := w.onMouseButton; fn != nil {
 			fn(b, action, mods)
@@ -671,10 +571,11 @@ func (w *window) SetCursor(shape wtypes.CursorShape) {
 	hidden := w.cursorHidden
 	serial := w.ptrSerial
 	w.mu.Unlock()
-	if hidden || w.cursorDev == nil {
+	if hidden || w.cursorShapeDev == nil {
 		return
 	}
-	w.cursorDev.SetShape(serial, cursorShapeMap(shape))
+	wpCursorShapeDevSetShape(w.cursorShapeDev, serial, cursorShapeMap(shape))
+	wlDisplayFlush(w.display)
 }
 
 func (w *window) HideCursor() {
@@ -695,10 +596,11 @@ func (w *window) ShowCursor() {
 	serial := w.ptrSerial
 	shape := w.cursorShape
 	w.mu.Unlock()
-	if w.cursorDev == nil {
+	if w.cursorShapeDev == nil {
 		return
 	}
-	w.cursorDev.SetShape(serial, cursorShapeMap(shape))
+	wpCursorShapeDevSetShape(w.cursorShapeDev, serial, cursorShapeMap(shape))
+	wlDisplayFlush(w.display)
 }
 
 func (w *window) SetMinSize(mw, mh uint32) {
@@ -730,16 +632,14 @@ func (w *window) Destroy() {
 	w.destroyed = true
 	w.mu.Unlock()
 
-	if w.cursorConn != nil {
-		w.cursorConn.Close()
-	}
-
 	proxyDestroy := func(p *unsafe.Pointer) {
 		if *p != nil {
 			wlProxyDestroy(*p)
 			*p = nil
 		}
 	}
+	proxyDestroy(&w.cursorShapeDev)
+	proxyDestroy(&w.cursorShapeMgr)
 	proxyDestroy(&w.pointer)
 	proxyDestroy(&w.keyboard)
 	proxyDestroy(&w.seat)
@@ -769,12 +669,9 @@ func (w *window) Destroy() {
 
 func (w *window) BeginDrag() {
 	w.mu.Lock()
-	w.dragging = true
-	x, y := w.ptrX, w.ptrY
+	serial := w.ptrSerial
 	w.mu.Unlock()
-	if fn := w.onDragBegin; fn != nil {
-		fn(x, y)
-	}
+	xdgToplevelMove(w.xdgToplevel, w.seat, serial)
 }
 
 // --- Event registration ---
@@ -794,6 +691,7 @@ func (w *window) OnDragBegin(fn func(float64, float64))  { w.onDragBegin = fn }
 func (w *window) OnDragMove(fn func(float64, float64))   { w.onDragMove = fn }
 func (w *window) OnDragEnd(fn func(float64, float64))    { w.onDragEnd = fn }
 func (w *window) OnDrop(fn func([]string))               { w.onDrop = fn }
+func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
 
 // --- WaylandWindow interface ---
 
@@ -1061,6 +959,21 @@ func xdgToplevelSetAppID(tl unsafe.Pointer, id string) {
 		})
 }
 
+func xdgToplevelMove(tl, seat unsafe.Pointer, serial uint32) {
+	args := [2]wlArgument{wlArgPtr(seat), wlArgUint(serial)}
+	var pin runtime.Pinner
+	pin.Pin(&args[0])
+	defer pin.Unpin()
+	argsPtr := unsafe.Pointer(&args[0])
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&tl),
+			unsafe.Pointer(&opcXdgToplevelMove),
+			unsafe.Pointer(&argsPtr),
+		})
+}
+
 func xdgToplevelSetMinSize(tl unsafe.Pointer, w, h int32) {
 	args := [2]wlArgument{}
 	*(*int32)(unsafe.Pointer(&args[0][0])) = w
@@ -1201,6 +1114,41 @@ func wlPointerSetCursorNull(pointer unsafe.Pointer, serial uint32) {
 		})
 }
 
+func wpCursorShapeMgrGetPointer(mgr, pointer unsafe.Pointer) unsafe.Pointer {
+	args := [2]wlArgument{wlArgNewID(), wlArgPtr(pointer)}
+	var pin runtime.Pinner
+	pin.Pin(&args[0])
+	defer pin.Unpin()
+	argsPtr := unsafe.Pointer(&args[0])
+	ifacePtr := unsafe.Pointer(&ifaceWpCursorShapeDeviceV1)
+	var result unsafe.Pointer
+	ffi.CallFunction(&cifWlProxyMarshalArrayConstructorVersioned, _wlProxyMarshalArrayConstructorVersioned,
+		unsafe.Pointer(&result),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&mgr),
+			unsafe.Pointer(&opcWpCursorShapeMgrGetPointer),
+			unsafe.Pointer(&argsPtr),
+			unsafe.Pointer(&ifacePtr),
+			pU32(1),
+		})
+	return result
+}
+
+func wpCursorShapeDevSetShape(dev unsafe.Pointer, serial, shape uint32) {
+	args := [2]wlArgument{wlArgUint(serial), wlArgUint(shape)}
+	var pin runtime.Pinner
+	pin.Pin(&args[0])
+	defer pin.Unpin()
+	argsPtr := unsafe.Pointer(&args[0])
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&dev),
+			unsafe.Pointer(&opcWpCursorShapeDevSetShape),
+			unsafe.Pointer(&argsPtr),
+		})
+}
+
 // --- Helpers ---
 
 func cstr(s string) []byte { return append([]byte(s), 0) }
@@ -1238,30 +1186,44 @@ func evdevButton(code uint32) (wtypes.Button, bool) {
 	return 0, false
 }
 
-func cursorShapeMap(shape wtypes.CursorShape) cursorproto.DeviceV1Shape {
+// wp_cursor_shape_device_v1.shape enum values.
+const (
+	wpCursorShapeDefault    = uint32(1)
+	wpCursorShapePointer    = uint32(4)
+	wpCursorShapeCrosshair  = uint32(8)
+	wpCursorShapeText       = uint32(9)
+	wpCursorShapeNotAllowed = uint32(15)
+	wpCursorShapeEwResize   = uint32(26)
+	wpCursorShapeNsResize   = uint32(27)
+	wpCursorShapeNeswResize = uint32(28)
+	wpCursorShapeNwseResize = uint32(29)
+	wpCursorShapeAllScroll  = uint32(32)
+)
+
+func cursorShapeMap(shape wtypes.CursorShape) uint32 {
 	switch shape {
 	case wtypes.CursorArrow:
-		return cursorproto.DeviceV1ShapeDefault
+		return wpCursorShapeDefault
 	case wtypes.CursorIBeam:
-		return cursorproto.DeviceV1ShapeText
+		return wpCursorShapeText
 	case wtypes.CursorCrosshair:
-		return cursorproto.DeviceV1ShapeCrosshair
+		return wpCursorShapeCrosshair
 	case wtypes.CursorHand:
-		return cursorproto.DeviceV1ShapePointer
+		return wpCursorShapePointer
 	case wtypes.CursorHResize:
-		return cursorproto.DeviceV1ShapeEwResize
+		return wpCursorShapeEwResize
 	case wtypes.CursorVResize:
-		return cursorproto.DeviceV1ShapeNsResize
+		return wpCursorShapeNsResize
 	case wtypes.CursorNWSEResize:
-		return cursorproto.DeviceV1ShapeNwseResize
+		return wpCursorShapeNwseResize
 	case wtypes.CursorNESWResize:
-		return cursorproto.DeviceV1ShapeNeswResize
+		return wpCursorShapeNeswResize
 	case wtypes.CursorAllResize:
-		return cursorproto.DeviceV1ShapeAllScroll
+		return wpCursorShapeAllScroll
 	case wtypes.CursorNotAllowed:
-		return cursorproto.DeviceV1ShapeNotAllowed
+		return wpCursorShapeNotAllowed
 	default:
-		return cursorproto.DeviceV1ShapeDefault
+		return wpCursorShapeDefault
 	}
 }
 
@@ -1441,32 +1403,3 @@ func parseURIList(raw string) []string {
 	return paths
 }
 
-// --- wayland-go handler adapters for cursor shape setup ---
-
-type cursorRegistryHandler struct {
-	onGlobal func(wl.RegistryGlobalEvent)
-}
-
-func (h *cursorRegistryHandler) HandleRegistryGlobal(ev wl.RegistryGlobalEvent) {
-	if h.onGlobal != nil {
-		h.onGlobal(ev)
-	}
-}
-func (h *cursorRegistryHandler) HandleRegistryGlobalRemove(ev wl.RegistryGlobalRemoveEvent) {}
-
-type cursorCallbackHandler struct {
-	flag *bool
-}
-
-func (h *cursorCallbackHandler) HandleCallbackDone(ev wl.CallbackDoneEvent) { *h.flag = true }
-
-type cursorSeatHandler struct {
-	onCaps func(wl.SeatCapabilitiesEvent)
-}
-
-func (h *cursorSeatHandler) HandleSeatCapabilities(ev wl.SeatCapabilitiesEvent) {
-	if h.onCaps != nil {
-		h.onCaps(ev)
-	}
-}
-func (h *cursorSeatHandler) HandleSeatName(ev wl.SeatNameEvent) {}

@@ -157,6 +157,7 @@ type window struct {
 	onDragMove    func(float64, float64)
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
+	onHitTest     func(float64, float64) wtypes.HitTestResult
 
 	cursorHidden bool
 	cursorShape  wtypes.CursorShape
@@ -511,6 +512,7 @@ func (w *window) OnDragBegin(fn func(float64, float64))      { w.onDragBegin = f
 func (w *window) OnDragMove(fn func(float64, float64))       { w.onDragMove = fn }
 func (w *window) OnDragEnd(fn func(float64, float64))        { w.onDragEnd = fn }
 func (w *window) OnDrop(fn func([]string))                   { w.onDrop = fn }
+func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
 
 // ─── X11Window interface ──────────────────────────────────────────────────────
 
@@ -609,6 +611,16 @@ func (w *window) processEvent(ev *xEvent) {
 		default:
 			b, ok := x11Button(btn)
 			if ok {
+				if b == wtypes.ButtonLeft {
+					if fn := w.onHitTest; fn != nil {
+						x := float64(ev.btnX())
+						y := float64(ev.btnY())
+						if fn(x, y) == wtypes.HitTestDrag {
+							w.BeginDrag()
+							return
+						}
+					}
+				}
 				mods := modFromState(ev.btnState())
 				if fn := w.onMouseButton; fn != nil {
 					fn(b, wtypes.Press, mods)

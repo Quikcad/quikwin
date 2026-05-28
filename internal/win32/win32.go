@@ -87,6 +87,11 @@ const (
 	wmExitSizeMove  = uint32(0x0232)
 	wmSetCursor     = uint32(0x0020)
 	wmNcCalcSize    = uint32(0x0083)
+	wmNcLButtonDown = uint32(0x00A1)
+
+	// Hit-test results
+	htClient  = int64(1)
+	htCaption = int64(2)
 
 	// SetWindowPos flags
 	swpNoZOrder     = uint32(0x0004)
@@ -142,6 +147,7 @@ type window struct {
 	onDragMove    func(float64, float64)
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
+	onHitTest     func(float64, float64) wtypes.HitTestResult
 
 	cursorHidden bool
 	cursorShape  wtypes.CursorShape
@@ -416,6 +422,26 @@ func (w *window) handleMessage(msg uint32, wParam uint64, lParam int64) (int64, 
 		}
 		return 0, true
 
+	case wmNcHitTest:
+		if fn := w.onHitTest; fn != nil {
+			def := defWindowProc(w.hwnd, wmNcHitTest, wParam, lParam)
+			if def == htClient {
+				screenX := int32(int16(lParam & 0xffff))
+				screenY := int32(int16((lParam >> 16) & 0xffff))
+				pt := [2]int32{screenX, screenY}
+				var pin runtime.Pinner
+				pin.Pin(&pt)
+				var ok int32
+				ffi.CallFunction(&cifScreenToClient, _ScreenToClient, unsafe.Pointer(&ok),
+					[]unsafe.Pointer{unsafe.Pointer(&w.hwnd), unsafe.Pointer(&pt)})
+				pin.Unpin()
+				if ok != 0 && fn(float64(pt[0]), float64(pt[1])) == wtypes.HitTestDrag {
+					return htCaption, true
+				}
+			}
+			return def, true
+		}
+
 	case wmSetCursor:
 		if lParam&0xffff == 1 { // HTCLIENT
 			w.mu.Lock()
@@ -562,13 +588,9 @@ func (w *window) Destroy() {
 }
 
 func (w *window) BeginDrag() {
-	// ReleaseCapture + SendMessage(WM_NCLBUTTONDOWN, HTCAPTION) is the standard
-	// way to trigger native title-bar dragging without a real title bar.
-	// Omitted here as it requires additional symbols; app can implement via
-	// returning HTCAPTION from WM_NCHITTEST via a hook.
-	if fn := w.onDragBegin; fn != nil {
-		fn(0, 0)
-	}
+	var result int32
+	ffi.CallFunction(&cifReleaseCapture, _ReleaseCapture, unsafe.Pointer(&result), []unsafe.Pointer{})
+	defWindowProc(w.hwnd, wmNcLButtonDown, uint64(htCaption), 0)
 }
 
 // ─── Event registration ───────────────────────────────────────────────────────
@@ -588,6 +610,7 @@ func (w *window) OnDragBegin(fn func(float64, float64))      { w.onDragBegin = f
 func (w *window) OnDragMove(fn func(float64, float64))       { w.onDragMove = fn }
 func (w *window) OnDragEnd(fn func(float64, float64))        { w.onDragEnd = fn }
 func (w *window) OnDrop(fn func([]string))                   { w.onDrop = fn }
+func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
 
 // ─── Win32Window interface ────────────────────────────────────────────────────
 
