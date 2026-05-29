@@ -198,7 +198,7 @@ func New(cfg *wtypes.Config) (*window, error) {
 		minWidth:  cfg.MinWidth,
 		minHeight: cfg.MinHeight,
 		resizable: cfg.Resizable,
-		decorated: cfg.Border && cfg.Titlebar,
+		decorated: cfg.Border,
 	}
 
 	w.internAtoms()
@@ -213,10 +213,13 @@ func New(cfg *wtypes.Config) (*window, error) {
 		w.applySizeConstraints(cfg.Width, cfg.Height)
 	}
 
-	// Remove decorations via _MOTIF_WM_HINTS when either border or
-	// titlebar is disabled.
-	if !cfg.Border || !cfg.Titlebar {
-		w.setUndecorated()
+	// Configure decorations via _MOTIF_WM_HINTS.
+	if !cfg.Border && !cfg.Titlebar {
+		w.setMotifDecorations(0)
+	} else if !cfg.Titlebar {
+		w.setMotifDecorations(mwmDecorBorder | mwmDecorResizeH)
+	} else if !cfg.Border {
+		w.setMotifDecorations(mwmDecorTitle | mwmDecorMenu)
 	}
 
 	w.netWmMoveResize = internAtomRaw(dpy, "_NET_WM_MOVERESIZE")
@@ -309,14 +312,23 @@ func (w *window) applySizeConstraints(width, height uint32) {
 		[]unsafe.Pointer{unsafe.Pointer(&w.dpy), unsafe.Pointer(&w.win), unsafe.Pointer(&hints)})
 }
 
-// setUndecorated removes window manager decorations via _MOTIF_WM_HINTS.
-func (w *window) setUndecorated() {
+// MWM decoration flags.
+const (
+	mwmDecorBorder  uint64 = 1 << 1
+	mwmDecorResizeH uint64 = 1 << 2
+	mwmDecorTitle   uint64 = 1 << 3
+	mwmDecorMenu    uint64 = 1 << 4
+)
+
+// setMotifDecorations sets the _MOTIF_WM_HINTS decoration bitmask.
+// Pass 0 to remove all decorations.
+func (w *window) setMotifDecorations(decor uint64) {
 	atom := internAtomRaw(w.dpy, "_MOTIF_WM_HINTS")
 	// MotifWmHints: flags, functions, decorations, input_mode, status (5 × uint64)
 	hints := [5]uint64{
 		1 << 1, // MWM_HINTS_DECORATIONS
 		0,
-		0, // decorations = none
+		decor,
 		0,
 		0,
 	}

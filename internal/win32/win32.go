@@ -232,7 +232,7 @@ func New(cfg *wtypes.Config) (*window, error) {
 		minWidth:  cfg.MinWidth,
 		minHeight: cfg.MinHeight,
 		resizable: cfg.Resizable,
-		decorated: cfg.Border && cfg.Titlebar,
+		decorated: cfg.Border,
 	}
 
 	wndProcMu.Lock()

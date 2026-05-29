@@ -113,7 +113,7 @@ func New(cfg *wtypes.Config) (*window, error) {
 		minWidth:  cfg.MinWidth,
 		minHeight: cfg.MinHeight,
 		resizable: cfg.Resizable,
-		decorated: cfg.Border && cfg.Titlebar,
+		decorated: cfg.Border,
 		globals:   make(map[string]globalEntry),
 	}
 
@@ -170,9 +170,10 @@ func New(cfg *wtypes.Config) (*window, error) {
 		xdgToplevelSetMinSize(w.xdgToplevel, int32(cfg.Width), int32(cfg.Height))
 	}
 
-	// Request client-side decorations when either border or titlebar is
-	// disabled, so the application controls its own chrome.
-	if (!cfg.Border || !cfg.Titlebar) && w.toplevelDecor != nil {
+	// Request client-side decorations only when the border is disabled.
+	// Wayland's xdg-decoration is all-or-nothing; requesting CSD when
+	// only the titlebar is disabled would also strip the border.
+	if !cfg.Border && w.toplevelDecor != nil {
 		zxdgToplevelDecorSetMode(w.toplevelDecor, uint32(xdgdeco.ToplevelDecorationV1ModeClientSide))
 	}
 
