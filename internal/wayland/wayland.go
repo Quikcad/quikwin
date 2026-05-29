@@ -55,7 +55,9 @@ type window struct {
 	ptrSerial     uint32
 	cursorSerial  uint32
 
-	dragging bool
+	resizable bool
+	decorated bool
+	dragging  bool
 
 	// Key repeat state
 	repeatRate  int32 // characters per second (0 = disabled)
@@ -109,6 +111,8 @@ func New(cfg *wtypes.Config) (*window, error) {
 		height:    cfg.Height,
 		minWidth:  cfg.MinWidth,
 		minHeight: cfg.MinHeight,
+		resizable: cfg.Resizable,
+		decorated: cfg.Decorated,
 		globals:   make(map[string]globalEntry),
 	}
 
@@ -520,10 +524,25 @@ func (w *window) startRepeat(k wtypes.Key, ch rune, mods wtypes.Mod) {
 
 func (w *window) setupPointerListeners() {
 	enterCB := func(data, ptr unsafe.Pointer, serial uint32, surf unsafe.Pointer, sx, sy int32) {
+		x := wlFixedToFloat(sx)
+		y := wlFixedToFloat(sy)
 		w.mu.Lock()
 		w.ptrSerial = serial
 		w.cursorSerial = serial
+		w.ptrX, w.ptrY = x, y
 		w.mu.Unlock()
+
+		if fn := w.onMouseMove; fn != nil {
+			fn(x, y)
+		}
+
+		if !w.decorated && w.resizable && w.cursorShapeDev != nil {
+			edge := wtypes.DetectEdge(x, y, float64(w.width), float64(w.height), wtypes.BorderWidth)
+			if edge != wtypes.EdgeNone {
+				wpCursorShapeDevSetShape(w.cursorShapeDev, serial, cursorShapeMap(wtypes.EdgeCursorShape(edge)))
+				wlDisplayFlush(w.display)
+			}
+		}
 	}
 	leaveCB := func(data, ptr unsafe.Pointer, serial uint32, surf unsafe.Pointer) {}
 	motionCB := func(data, ptr unsafe.Pointer, time uint32, sx, sy int32) {
@@ -536,9 +555,17 @@ func (w *window) setupPointerListeners() {
 			if fn := w.onDragMove; fn != nil {
 				fn(x, y)
 			}
-		} else {
-			if fn := w.onMouseMove; fn != nil {
-				fn(x, y)
+			return
+		}
+		if fn := w.onMouseMove; fn != nil {
+			fn(x, y)
+		}
+		if !w.decorated && w.resizable && w.cursorShapeDev != nil {
+			edge := wtypes.DetectEdge(x, y, float64(w.width), float64(w.height), wtypes.BorderWidth)
+			if edge != wtypes.EdgeNone {
+				serial := w.cursorSerial
+				wpCursorShapeDevSetShape(w.cursorShapeDev, serial, cursorShapeMap(wtypes.EdgeCursorShape(edge)))
+				wlDisplayFlush(w.display)
 			}
 		}
 	}
@@ -565,6 +592,13 @@ func (w *window) setupPointerListeners() {
 			return
 		}
 		if action == wtypes.Press && b == wtypes.ButtonLeft {
+			if !w.decorated && w.resizable {
+				edge := wtypes.DetectEdge(w.ptrX, w.ptrY, float64(w.width), float64(w.height), wtypes.BorderWidth)
+				if edge != wtypes.EdgeNone {
+					xdgToplevelResize(w.xdgToplevel, w.seat, serial, uint32(edge))
+					return
+				}
+			}
 			if fn := w.onHitTest; fn != nil {
 				if fn(w.ptrX, w.ptrY) == wtypes.HitTestDrag {
 					xdgToplevelMove(w.xdgToplevel, w.seat, serial)
@@ -1044,6 +1078,21 @@ func xdgToplevelMove(tl, seat unsafe.Pointer, serial uint32) {
 		[]unsafe.Pointer{
 			unsafe.Pointer(&tl),
 			unsafe.Pointer(&opcXdgToplevelMove),
+			unsafe.Pointer(&argsPtr),
+		})
+}
+
+func xdgToplevelResize(tl, seat unsafe.Pointer, serial, edges uint32) {
+	args := [3]wlArgument{wlArgPtr(seat), wlArgUint(serial), wlArgUint(edges)}
+	var pin runtime.Pinner
+	pin.Pin(&args[0])
+	defer pin.Unpin()
+	argsPtr := unsafe.Pointer(&args[0])
+	var r int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&r),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&tl),
+			unsafe.Pointer(&opcXdgToplevelResize),
 			unsafe.Pointer(&argsPtr),
 		})
 }

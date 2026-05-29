@@ -154,3 +154,57 @@ const (
 	HitTestClient HitTestResult = iota
 	HitTestDrag
 )
+
+// ResizeEdge identifies which edge(s) the cursor is near. Values match
+// the xdg_toplevel resize_edge enum so Wayland can cast directly.
+type ResizeEdge uint32
+
+const (
+	EdgeNone        ResizeEdge = 0
+	EdgeTop         ResizeEdge = 1
+	EdgeBottom      ResizeEdge = 2
+	EdgeLeft        ResizeEdge = 4
+	EdgeTopLeft     ResizeEdge = EdgeTop | EdgeLeft    // 5
+	EdgeBottomLeft  ResizeEdge = EdgeBottom | EdgeLeft  // 6
+	EdgeRight       ResizeEdge = 8
+	EdgeTopRight    ResizeEdge = EdgeTop | EdgeRight   // 9
+	EdgeBottomRight ResizeEdge = EdgeBottom | EdgeRight // 10
+)
+
+// BorderWidth is the pixel width of the invisible resize border on
+// undecorated windows.
+const BorderWidth = 5.0
+
+// DetectEdge returns the resize edge the point (x, y) falls on within
+// a window of dimensions (w, h) and the given border width.
+func DetectEdge(x, y, w, h, border float64) ResizeEdge {
+	var edge ResizeEdge
+	if y < border {
+		edge |= EdgeTop
+	} else if y > h-border {
+		edge |= EdgeBottom
+	}
+	if x < border {
+		edge |= EdgeLeft
+	} else if x > w-border {
+		edge |= EdgeRight
+	}
+	return edge
+}
+
+// EdgeCursorShape returns the cursor shape appropriate for the given
+// resize edge.
+func EdgeCursorShape(edge ResizeEdge) CursorShape {
+	switch edge {
+	case EdgeTop, EdgeBottom:
+		return CursorVResize
+	case EdgeLeft, EdgeRight:
+		return CursorHResize
+	case EdgeTopLeft, EdgeBottomRight:
+		return CursorNWSEResize
+	case EdgeTopRight, EdgeBottomLeft:
+		return CursorNESWResize
+	default:
+		return CursorArrow
+	}
+}

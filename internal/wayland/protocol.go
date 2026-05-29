@@ -351,6 +351,7 @@ var (
 	opcXdgToplevelSetTitle               = uint32(2)
 	opcXdgToplevelSetAppID               = uint32(3)
 	opcXdgToplevelMove                   = uint32(5)
+	opcXdgToplevelResize                 = uint32(6)
 	opcXdgToplevelSetMaxSize             = uint32(7)
 	opcXdgToplevelSetMinSize             = uint32(8)
 	opcWlSurfaceCommit                   = uint32(6)

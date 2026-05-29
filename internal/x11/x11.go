@@ -64,16 +64,17 @@ func (h *xSizeHints) setMaxSize(w, height int32) {
 
 // X11 event type constants
 const (
-	evKeyPress      = 2
-	evKeyRelease    = 3
-	evButtonPress   = 4
-	evButtonRelease = 5
-	evMotionNotify  = 6
-	evFocusIn       = 9
-	evFocusOut      = 10
+	evKeyPress        = 2
+	evKeyRelease      = 3
+	evButtonPress     = 4
+	evButtonRelease   = 5
+	evMotionNotify    = 6
+	evEnterNotify     = 7
+	evFocusIn         = 9
+	evFocusOut        = 10
 	evConfigureNotify = 22
 	evSelectionNotify = 31
-	evClientMessage = 33
+	evClientMessage   = 33
 )
 
 // X11 event mask constants
@@ -82,6 +83,7 @@ const (
 	keyReleaseMask      int64 = 1 << 1
 	buttonPressMask     int64 = 1 << 2
 	buttonReleaseMask   int64 = 1 << 3
+	enterWindowMask     int64 = 1 << 4
 	pointerMotionMask   int64 = 1 << 6
 	structureNotifyMask int64 = 1 << 17
 	focusChangeMask     int64 = 1 << 21
@@ -138,10 +140,16 @@ type window struct {
 	xdndSource    uint64
 	xdndTimestamp uint64
 
+	resizable bool
+	decorated bool
+
 	// Window-movement drag state
 	dragging bool
 	dragOffX int32
 	dragOffY int32
+
+	// Resize state
+	netWmMoveResize uint64
 
 	// Callbacks
 	onResize      func(uint32, uint32)
@@ -188,6 +196,8 @@ func New(cfg *wtypes.Config) (*window, error) {
 		height:    cfg.Height,
 		minWidth:  cfg.MinWidth,
 		minHeight: cfg.MinHeight,
+		resizable: cfg.Resizable,
+		decorated: cfg.Decorated,
 	}
 
 	w.internAtoms()
@@ -207,8 +217,10 @@ func New(cfg *wtypes.Config) (*window, error) {
 		w.setUndecorated()
 	}
 
+	w.netWmMoveResize = internAtomRaw(dpy, "_NET_WM_MOVERESIZE")
+
 	eventMask := keyPressMask | keyReleaseMask | buttonPressMask | buttonReleaseMask |
-		pointerMotionMask | structureNotifyMask | focusChangeMask
+		enterWindowMask | pointerMotionMask | structureNotifyMask | focusChangeMask
 	xSelectInput(dpy, win, eventMask)
 
 	xStoreName(dpy, win, cfg.Title)
@@ -495,6 +507,61 @@ func (w *window) BeginDrag() {
 	}
 }
 
+// beginResize initiates a WM-driven resize via _NET_WM_MOVERESIZE.
+func (w *window) beginResize(edge wtypes.ResizeEdge, rootX, rootY int32) {
+	dir := edgeToMoveResizeDir(edge)
+
+	var ev xEvent
+	*(*int32)(unsafe.Pointer(&ev[0])) = evClientMessage
+	*(*uint64)(unsafe.Pointer(&ev[32])) = w.win
+	*(*uint64)(unsafe.Pointer(&ev[40])) = w.netWmMoveResize
+	*(*int32)(unsafe.Pointer(&ev[48])) = 32
+	*(*uint64)(unsafe.Pointer(&ev[56])) = uint64(rootX)
+	*(*uint64)(unsafe.Pointer(&ev[64])) = uint64(rootY)
+	*(*uint64)(unsafe.Pointer(&ev[72])) = uint64(dir)
+	*(*uint64)(unsafe.Pointer(&ev[80])) = 1 // button 1 (left)
+	*(*uint64)(unsafe.Pointer(&ev[88])) = 1 // source = application
+
+	root := xDefaultRootWindow(w.dpy)
+	propagate := int32(0)
+	mask := structureNotifyMask | (1 << 20) // SubstructureRedirectMask
+	var result int32
+	var pin runtime.Pinner
+	pin.Pin(&ev)
+	defer pin.Unpin()
+	ffi.CallFunction(&cifXSendEvent, _XSendEvent, unsafe.Pointer(&result),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&w.dpy), unsafe.Pointer(&root),
+			unsafe.Pointer(&propagate), unsafe.Pointer(&mask),
+			unsafe.Pointer(&ev),
+		})
+	xFlush(w.dpy)
+}
+
+// edgeToMoveResizeDir maps ResizeEdge to _NET_WM_MOVERESIZE direction.
+func edgeToMoveResizeDir(edge wtypes.ResizeEdge) int32 {
+	switch edge {
+	case wtypes.EdgeTopLeft:
+		return 0
+	case wtypes.EdgeTop:
+		return 1
+	case wtypes.EdgeTopRight:
+		return 2
+	case wtypes.EdgeRight:
+		return 3
+	case wtypes.EdgeBottomRight:
+		return 4
+	case wtypes.EdgeBottom:
+		return 5
+	case wtypes.EdgeBottomLeft:
+		return 6
+	case wtypes.EdgeLeft:
+		return 7
+	default:
+		return -1
+	}
+}
+
 // ─── Event registration ───────────────────────────────────────────────────────
 
 func (w *window) OnResize(fn func(uint32, uint32))           { w.onResize = fn }
@@ -589,6 +656,19 @@ func (w *window) processEvent(ev *xEvent) {
 			}
 		}
 
+	case evEnterNotify:
+		x := float64(ev.motionX())
+		y := float64(ev.motionY())
+		if fn := w.onMouseMove; fn != nil {
+			fn(x, y)
+		}
+		if !w.decorated && w.resizable {
+			edge := wtypes.DetectEdge(x, y, float64(w.width), float64(w.height), wtypes.BorderWidth)
+			if edge != wtypes.EdgeNone {
+				w.SetCursor(wtypes.EdgeCursorShape(edge))
+			}
+		}
+
 	case evButtonPress:
 		btn := ev.btnButton()
 		switch btn {
@@ -612,6 +692,15 @@ func (w *window) processEvent(ev *xEvent) {
 			b, ok := x11Button(btn)
 			if ok {
 				if b == wtypes.ButtonLeft {
+					if !w.decorated && w.resizable {
+						x := float64(ev.btnX())
+						y := float64(ev.btnY())
+						edge := wtypes.DetectEdge(x, y, float64(w.width), float64(w.height), wtypes.BorderWidth)
+						if edge != wtypes.EdgeNone {
+							w.beginResize(edge, ev.motionXRoot(), ev.motionYRoot())
+							return
+						}
+					}
 					if fn := w.onHitTest; fn != nil {
 						x := float64(ev.btnX())
 						y := float64(ev.btnY())
@@ -662,8 +751,16 @@ func (w *window) processEvent(ev *xEvent) {
 				fn(float64(ev.motionX()), float64(ev.motionY()))
 			}
 		} else {
+			x := float64(ev.motionX())
+			y := float64(ev.motionY())
 			if fn := w.onMouseMove; fn != nil {
-				fn(float64(ev.motionX()), float64(ev.motionY()))
+				fn(x, y)
+			}
+			if !w.decorated && w.resizable {
+				edge := wtypes.DetectEdge(x, y, float64(w.width), float64(w.height), wtypes.BorderWidth)
+				if edge != wtypes.EdgeNone {
+					w.SetCursor(wtypes.EdgeCursorShape(edge))
+				}
 			}
 		}
 

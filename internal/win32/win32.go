@@ -90,8 +90,16 @@ const (
 	wmNcLButtonDown = uint32(0x00A1)
 
 	// Hit-test results
-	htClient  = int64(1)
-	htCaption = int64(2)
+	htClient      = int64(1)
+	htCaption     = int64(2)
+	htLeft        = int64(10)
+	htRight       = int64(11)
+	htTop         = int64(12)
+	htTopLeft     = int64(13)
+	htTopRight    = int64(14)
+	htBottom      = int64(15)
+	htBottomLeft  = int64(16)
+	htBottomRight = int64(17)
 
 	// SetWindowPos flags
 	swpNoZOrder     = uint32(0x0004)
@@ -130,6 +138,8 @@ type window struct {
 
 	width, height       uint32
 	minWidth, minHeight uint32
+	resizable           bool
+	decorated           bool
 	darkMode            bool
 	snapLayout          bool
 	mica                bool
@@ -183,6 +193,9 @@ func New(cfg *wtypes.Config) (*window, error) {
 	}
 	if !cfg.Decorated {
 		style = wsPopup
+		if cfg.Resizable {
+			style |= wsThickFrame
+		}
 	}
 
 	w := int32(cfg.Width)
@@ -213,6 +226,8 @@ func New(cfg *wtypes.Config) (*window, error) {
 		height:    cfg.Height,
 		minWidth:  cfg.MinWidth,
 		minHeight: cfg.MinHeight,
+		resizable: cfg.Resizable,
+		decorated: cfg.Decorated,
 	}
 
 	wndProcMu.Lock()
@@ -422,25 +437,36 @@ func (w *window) handleMessage(msg uint32, wParam uint64, lParam int64) (int64, 
 		}
 		return 0, true
 
-	case wmNcHitTest:
-		if fn := w.onHitTest; fn != nil {
-			def := defWindowProc(w.hwnd, wmNcHitTest, wParam, lParam)
-			if def == htClient {
-				screenX := int32(int16(lParam & 0xffff))
-				screenY := int32(int16((lParam >> 16) & 0xffff))
-				pt := [2]int32{screenX, screenY}
-				var pin runtime.Pinner
-				pin.Pin(&pt)
-				var ok int32
-				ffi.CallFunction(&cifScreenToClient, _ScreenToClient, unsafe.Pointer(&ok),
-					[]unsafe.Pointer{unsafe.Pointer(&w.hwnd), unsafe.Pointer(&pt)})
-				pin.Unpin()
-				if ok != 0 && fn(float64(pt[0]), float64(pt[1])) == wtypes.HitTestDrag {
-					return htCaption, true
-				}
-			}
-			return def, true
+	case wmNcCalcSize:
+		if !w.decorated && wParam == 1 {
+			return 0, true
 		}
+
+	case wmNcHitTest:
+		screenX := int32(int16(lParam & 0xffff))
+		screenY := int32(int16((lParam >> 16) & 0xffff))
+		pt := [2]int32{screenX, screenY}
+		var pin runtime.Pinner
+		pin.Pin(&pt)
+		var ok int32
+		ffi.CallFunction(&cifScreenToClient, _ScreenToClient, unsafe.Pointer(&ok),
+			[]unsafe.Pointer{unsafe.Pointer(&w.hwnd), unsafe.Pointer(&pt)})
+		pin.Unpin()
+
+		if ok != 0 && !w.decorated && w.resizable {
+			edge := wtypes.DetectEdge(float64(pt[0]), float64(pt[1]), float64(w.width), float64(w.height), wtypes.BorderWidth)
+			if ht := edgeToHitTest(edge); ht != 0 {
+				return ht, true
+			}
+		}
+
+		if fn := w.onHitTest; fn != nil {
+			if ok != 0 && fn(float64(pt[0]), float64(pt[1])) == wtypes.HitTestDrag {
+				return htCaption, true
+			}
+		}
+
+		return defWindowProc(w.hwnd, wmNcHitTest, wParam, lParam), true
 
 	case wmSetCursor:
 		if lParam&0xffff == 1 { // HTCLIENT
@@ -793,6 +819,29 @@ func win32CursorID(shape wtypes.CursorShape) uintptr {
 		return 32648 // IDC_NO
 	}
 	return 32512
+}
+
+func edgeToHitTest(edge wtypes.ResizeEdge) int64 {
+	switch edge {
+	case wtypes.EdgeTop:
+		return htTop
+	case wtypes.EdgeBottom:
+		return htBottom
+	case wtypes.EdgeLeft:
+		return htLeft
+	case wtypes.EdgeRight:
+		return htRight
+	case wtypes.EdgeTopLeft:
+		return htTopLeft
+	case wtypes.EdgeTopRight:
+		return htTopRight
+	case wtypes.EdgeBottomLeft:
+		return htBottomLeft
+	case wtypes.EdgeBottomRight:
+		return htBottomRight
+	default:
+		return 0
+	}
 }
 
 func vkToKey(vk uint32) wtypes.Key {
