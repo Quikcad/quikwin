@@ -166,6 +166,7 @@ type window struct {
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
 	onHitTest     func(float64, float64) wtypes.HitTestResult
+	onCursorEnter func(float64, float64)
 
 	cursorHidden bool
 	cursorShape  wtypes.CursorShape
@@ -197,7 +198,7 @@ func New(cfg *wtypes.Config) (*window, error) {
 		minWidth:  cfg.MinWidth,
 		minHeight: cfg.MinHeight,
 		resizable: cfg.Resizable,
-		decorated: cfg.Decorated,
+		decorated: cfg.Border && cfg.Titlebar,
 	}
 
 	w.internAtoms()
@@ -212,8 +213,9 @@ func New(cfg *wtypes.Config) (*window, error) {
 		w.applySizeConstraints(cfg.Width, cfg.Height)
 	}
 
-	// Remove decorations via _MOTIF_WM_HINTS.
-	if !cfg.Decorated {
+	// Remove decorations via _MOTIF_WM_HINTS when either border or
+	// titlebar is disabled.
+	if !cfg.Border || !cfg.Titlebar {
 		w.setUndecorated()
 	}
 
@@ -580,6 +582,7 @@ func (w *window) OnDragMove(fn func(float64, float64))       { w.onDragMove = fn
 func (w *window) OnDragEnd(fn func(float64, float64))        { w.onDragEnd = fn }
 func (w *window) OnDrop(fn func([]string))                   { w.onDrop = fn }
 func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
+func (w *window) OnCursorEnter(fn func(float64, float64))                 { w.onCursorEnter = fn }
 
 // ─── X11Window interface ──────────────────────────────────────────────────────
 
@@ -659,7 +662,7 @@ func (w *window) processEvent(ev *xEvent) {
 	case evEnterNotify:
 		x := float64(ev.motionX())
 		y := float64(ev.motionY())
-		if fn := w.onMouseMove; fn != nil {
+		if fn := w.onCursorEnter; fn != nil {
 			fn(x, y)
 		}
 		if !w.decorated && w.resizable {

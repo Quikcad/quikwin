@@ -531,8 +531,10 @@ type window struct {
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
 	onHitTest     func(float64, float64) wtypes.HitTestResult
+	onCursorEnter func(float64, float64)
 
-	cursorHidden bool
+	cursorHidden  bool
+	mouseInWindow bool
 }
 
 func New(cfg *wtypes.Config) (*window, error) {
@@ -549,7 +551,7 @@ func New(cfg *wtypes.Config) (*window, error) {
 	minW, minH := cfg.MinWidth, cfg.MinHeight
 
 	style := nsWindowStyleMaskClosable | nsWindowStyleMaskMiniaturizable
-	if cfg.Decorated {
+	if cfg.Titlebar {
 		style |= nsWindowStyleMaskTitled
 	}
 	if cfg.Resizable {
@@ -742,6 +744,16 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 		if w.mouseY < 0 {
 			w.mouseY = 0
 		}
+		inside := w.mouseX >= 0 && w.mouseX < float64(w.width) &&
+			w.mouseY >= 0 && w.mouseY < float64(w.height)
+		if inside && !w.mouseInWindow {
+			w.mouseInWindow = true
+			if fn := w.onCursorEnter; fn != nil {
+				fn(w.mouseX, w.mouseY)
+			}
+		} else if !inside {
+			w.mouseInWindow = false
+		}
 		if fn := w.onMouseMove; fn != nil {
 			fn(w.mouseX, w.mouseY)
 		}
@@ -856,6 +868,7 @@ func (w *window) OnDragMove(fn func(float64, float64))                        { 
 func (w *window) OnDragEnd(fn func(float64, float64))                         { w.onDragEnd = fn }
 func (w *window) OnDrop(fn func([]string))                                    { w.onDrop = fn }
 func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult)   { w.onHitTest = fn }
+func (w *window) OnCursorEnter(fn func(float64, float64))                   { w.onCursorEnter = fn }
 
 // ---------------------------------------------------------------------------
 // CocoaWindow interface methods

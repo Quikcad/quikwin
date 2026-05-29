@@ -24,8 +24,12 @@ func WithResizable(resizable bool) Option {
 	return func(c *Config) { c.Resizable = resizable }
 }
 
-func WithDecorated(decorated bool) Option {
-	return func(c *Config) { c.Decorated = decorated }
+func WithBorder(border bool) Option {
+	return func(c *Config) { c.Border = border }
+}
+
+func WithTitlebar(titlebar bool) Option {
+	return func(c *Config) { c.Titlebar = titlebar }
 }
 
 // New creates a platform window and returns it as any.
@@ -36,7 +40,8 @@ func New(opts ...Option) (any, error) {
 		Width:     800,
 		Height:    600,
 		Resizable: true,
-		Decorated: true,
+		Border:    true,
+		Titlebar:  true,
 	}
 	for _, o := range opts {
 		o(cfg)

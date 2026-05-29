@@ -9,7 +9,8 @@ func WithTitle(title string) Option      { return common.WithTitle(title) }
 func WithSize(w, h uint32) Option        { return common.WithSize(w, h) }
 func WithMinSize(w, h uint32) Option     { return common.WithMinSize(w, h) }
 func WithResizable(resizable bool) Option { return common.WithResizable(resizable) }
-func WithDecorated(decorated bool) Option { return common.WithDecorated(decorated) }
+func WithBorder(border bool) Option       { return common.WithBorder(border) }
+func WithTitlebar(titlebar bool) Option   { return common.WithTitlebar(titlebar) }
 
 // New creates a native window using the current platform's backend.
 // The returned value also satisfies vkwin.Window.

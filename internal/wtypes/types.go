@@ -130,7 +130,8 @@ type Config struct {
 	Width, Height       uint32
 	MinWidth, MinHeight uint32
 	Resizable           bool
-	Decorated           bool
+	Border              bool
+	Titlebar            bool
 }
 
 type CursorShape uint8

@@ -46,6 +46,7 @@ var (
 	_MoveWindow         unsafe.Pointer
 	_ReleaseCapture     unsafe.Pointer
 	_ScreenToClient     unsafe.Pointer
+	_TrackMouseEvent    unsafe.Pointer
 
 	// kernel32
 	_GetModuleHandleW unsafe.Pointer
@@ -74,6 +75,7 @@ var (
 	cifGetWindowLongPtrW   types.CallInterface
 	cifReleaseCapture      types.CallInterface
 	cifScreenToClient      types.CallInterface
+	cifTrackMouseEvent     types.CallInterface
 )
 
 var (
@@ -136,6 +138,7 @@ func loadSymbols() error {
 		{&_MoveWindow, u, "MoveWindow"},
 		{&_ReleaseCapture, u, "ReleaseCapture"},
 		{&_ScreenToClient, u, "ScreenToClient"},
+		{&_TrackMouseEvent, u, "TrackMouseEvent"},
 		{&_GetModuleHandleW, k, "GetModuleHandleW"},
 	} {
 		var err error
@@ -208,6 +211,8 @@ func prepareCIFs() error {
 		{&cifReleaseCapture, _i32, []*types.TypeDescriptor{}},
 		// ScreenToClient(HWND, *POINT) → BOOL
 		{&cifScreenToClient, _i32, []*types.TypeDescriptor{_ptr, _ptr}},
+		// TrackMouseEvent(*TRACKMOUSEEVENT) → BOOL
+		{&cifTrackMouseEvent, _i32, []*types.TypeDescriptor{_ptr}},
 	} {
 		if err := prep(e.cif, e.ret, e.args); err != nil {
 			return fmt.Errorf("quikwin/win32: PrepareCallInterface: %w", err)

@@ -78,6 +78,7 @@ type window struct {
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
 	onHitTest     func(float64, float64) wtypes.HitTestResult
+	onCursorEnter func(float64, float64)
 
 	// Listener structs — must stay alive as long as the window lives.
 	registryListener      [2]uintptr
@@ -112,7 +113,7 @@ func New(cfg *wtypes.Config) (*window, error) {
 		minWidth:  cfg.MinWidth,
 		minHeight: cfg.MinHeight,
 		resizable: cfg.Resizable,
-		decorated: cfg.Decorated,
+		decorated: cfg.Border && cfg.Titlebar,
 		globals:   make(map[string]globalEntry),
 	}
 
@@ -169,9 +170,9 @@ func New(cfg *wtypes.Config) (*window, error) {
 		xdgToplevelSetMinSize(w.xdgToplevel, int32(cfg.Width), int32(cfg.Height))
 	}
 
-	// Decorations: if the compositor supports xdg-decoration, request
-	// server-side (decorated) or client-side (undecorated).
-	if !cfg.Decorated && w.toplevelDecor != nil {
+	// Request client-side decorations when either border or titlebar is
+	// disabled, so the application controls its own chrome.
+	if (!cfg.Border || !cfg.Titlebar) && w.toplevelDecor != nil {
 		zxdgToplevelDecorSetMode(w.toplevelDecor, uint32(xdgdeco.ToplevelDecorationV1ModeClientSide))
 	}
 
@@ -532,7 +533,7 @@ func (w *window) setupPointerListeners() {
 		w.ptrX, w.ptrY = x, y
 		w.mu.Unlock()
 
-		if fn := w.onMouseMove; fn != nil {
+		if fn := w.onCursorEnter; fn != nil {
 			fn(x, y)
 		}
 
@@ -800,6 +801,7 @@ func (w *window) OnDragMove(fn func(float64, float64))   { w.onDragMove = fn }
 func (w *window) OnDragEnd(fn func(float64, float64))    { w.onDragEnd = fn }
 func (w *window) OnDrop(fn func([]string))               { w.onDrop = fn }
 func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
+func (w *window) OnCursorEnter(fn func(float64, float64))                 { w.onCursorEnter = fn }
 
 // --- WaylandWindow interface ---
 

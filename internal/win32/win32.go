@@ -88,6 +88,10 @@ const (
 	wmSetCursor     = uint32(0x0020)
 	wmNcCalcSize    = uint32(0x0083)
 	wmNcLButtonDown = uint32(0x00A1)
+	wmMouseLeave    = uint32(0x02A3)
+
+	// TrackMouseEvent flags
+	tmeLeave = uint32(0x00000002)
 
 	// Hit-test results
 	htClient      = int64(1)
@@ -158,9 +162,11 @@ type window struct {
 	onDragEnd     func(float64, float64)
 	onDrop        func([]string)
 	onHitTest     func(float64, float64) wtypes.HitTestResult
+	onCursorEnter func(float64, float64)
 
-	cursorHidden bool
-	cursorShape  wtypes.CursorShape
+	cursorHidden  bool
+	cursorShape   wtypes.CursorShape
+	mouseInWindow bool
 
 	shouldClose bool
 	destroyed   bool
@@ -187,15 +193,14 @@ func New(cfg *wtypes.Config) (*window, error) {
 	defer pin.Unpin()
 
 	// Build window style based on config.
-	style := wsOverlapped | wsCaption | wsSysMenu | wsMinimizeBox
+	style := wsOverlapped
+	if cfg.Titlebar {
+		style |= wsCaption | wsSysMenu | wsMinimizeBox
+	} else {
+		style = wsPopup
+	}
 	if cfg.Resizable {
 		style |= wsThickFrame | wsMaximizeBox
-	}
-	if !cfg.Decorated {
-		style = wsPopup
-		if cfg.Resizable {
-			style |= wsThickFrame
-		}
 	}
 
 	w := int32(cfg.Width)
@@ -227,7 +232,7 @@ func New(cfg *wtypes.Config) (*window, error) {
 		minWidth:  cfg.MinWidth,
 		minHeight: cfg.MinHeight,
 		resizable: cfg.Resizable,
-		decorated: cfg.Decorated,
+		decorated: cfg.Border && cfg.Titlebar,
 	}
 
 	wndProcMu.Lock()
@@ -374,9 +379,20 @@ func (w *window) handleMessage(msg uint32, wParam uint64, lParam int64) (int64, 
 	case wmMouseMove:
 		x := float64(int16(lParam & 0xffff))
 		y := float64(int16((lParam >> 16) & 0xffff))
+		if !w.mouseInWindow {
+			w.mouseInWindow = true
+			w.trackMouseLeave()
+			if fn := w.onCursorEnter; fn != nil {
+				fn(x, y)
+			}
+		}
 		if fn := w.onMouseMove; fn != nil {
 			fn(x, y)
 		}
+		return 0, true
+
+	case wmMouseLeave:
+		w.mouseInWindow = false
 		return 0, true
 
 	case wmLButtonDown:
@@ -637,6 +653,7 @@ func (w *window) OnDragMove(fn func(float64, float64))       { w.onDragMove = fn
 func (w *window) OnDragEnd(fn func(float64, float64))        { w.onDragEnd = fn }
 func (w *window) OnDrop(fn func([]string))                   { w.onDrop = fn }
 func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
+func (w *window) OnCursorEnter(fn func(float64, float64))                 { w.onCursorEnter = fn }
 
 // ─── Win32Window interface ────────────────────────────────────────────────────
 
@@ -793,6 +810,28 @@ func trimNullW(b []uint16) []uint16 {
 
 func pU32(v uint32) unsafe.Pointer { return unsafe.Pointer(&v) }
 func pI32(v int32) unsafe.Pointer  { return unsafe.Pointer(&v) }
+
+// TRACKMOUSEEVENT struct: cbSize(u32) + dwFlags(u32) + hwndTrack(ptr) + dwHoverTime(u32)
+// On 64-bit Windows: 4+4+8+4 = 20 bytes, but struct is padded to 24 for alignment.
+func (w *window) trackMouseLeave() {
+	type trackMouseEvent struct {
+		cbSize      uint32
+		dwFlags     uint32
+		hwndTrack   unsafe.Pointer
+		dwHoverTime uint32
+	}
+	tme := trackMouseEvent{
+		cbSize:    uint32(unsafe.Sizeof(trackMouseEvent{})),
+		dwFlags:   tmeLeave,
+		hwndTrack: w.hwnd,
+	}
+	var pin runtime.Pinner
+	pin.Pin(&tme)
+	var result int32
+	ffi.CallFunction(&cifTrackMouseEvent, _TrackMouseEvent, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&tme)})
+	pin.Unpin()
+}
 
 func win32CursorID(shape wtypes.CursorShape) uintptr {
 	// Standard Win32 IDC_* cursor IDs (as uintptr for LoadCursorW MAKEINTRESOURCE)
