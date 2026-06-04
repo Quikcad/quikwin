@@ -176,9 +176,9 @@ var (
 	}
 )
 
-// xdg_toplevel: 9 requests, 4 events
+// xdg_toplevel: 14 requests, 4 events
 var (
-	xdgToplevelMethods = [9]wlMessage{
+	xdgToplevelMethods = [14]wlMessage{
 		{name: bstr("destroy"), signature: sigEmpty, types: nilTypes},
 		{name: bstr("set_parent"), signature: bstr("?o"), types: nilTypes},
 		{name: bstr("set_title"), signature: sigS, types: nilTypes},
@@ -188,6 +188,11 @@ var (
 		{name: bstr("resize"), signature: bstr("ouu"), types: nilTypes},
 		{name: bstr("set_max_size"), signature: sigIi, types: nilTypes},
 		{name: bstr("set_min_size"), signature: sigIi, types: nilTypes},
+		{name: bstr("set_maximized"), signature: sigEmpty, types: nilTypes},
+		{name: bstr("unset_maximized"), signature: sigEmpty, types: nilTypes},
+		{name: bstr("set_fullscreen"), signature: bstr("?o"), types: nilTypes},
+		{name: bstr("unset_fullscreen"), signature: sigEmpty, types: nilTypes},
+		{name: bstr("set_minimized"), signature: sigEmpty, types: nilTypes},
 	}
 	xdgToplevelEvents = [4]wlMessage{
 		{name: bstr("configure"), signature: sigIia, types: nilTypes},
@@ -198,7 +203,7 @@ var (
 	ifaceXdgToplevel = wlInterface{
 		name:        bstr("xdg_toplevel"),
 		version:     6,
-		methodCount: 9,
+		methodCount: 14,
 		methods:     &xdgToplevelMethods[0],
 		eventCount:  4,
 		events:      &xdgToplevelEvents[0],
@@ -354,6 +359,9 @@ var (
 	opcXdgToplevelResize                 = uint32(6)
 	opcXdgToplevelSetMaxSize             = uint32(7)
 	opcXdgToplevelSetMinSize             = uint32(8)
+	opcXdgToplevelSetMaximized           = uint32(9)
+	opcXdgToplevelUnsetMaximized         = uint32(10)
+	opcXdgToplevelSetMinimized           = uint32(13)
 	opcWlSurfaceCommit                   = uint32(6)
 	opcWlSeatGetPointer                  = uint32(0)
 	opcWlSeatGetKeyboard                 = uint32(1)

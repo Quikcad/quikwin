@@ -58,6 +58,10 @@ type window struct {
 	resizable bool
 	decorated bool
 	dragging  bool
+	maximized bool
+
+	pendingMinimize       bool
+	pendingToggleMaximize bool
 
 	// Key repeat state
 	repeatRate  int32 // characters per second (0 = disabled)
@@ -158,6 +162,10 @@ func New(cfg *wtypes.Config) (*window, error) {
 	}
 
 	xdgToplevelSetTitle(w.xdgToplevel, cfg.Title)
+	// Set an app_id so the compositor (e.g. KWin) keeps a stable, restorable
+	// taskbar entry — without one a minimized window can become unrecoverable.
+	w.appID = cfg.Title
+	xdgToplevelSetAppID(w.xdgToplevel, cfg.Title)
 	if cfg.MinWidth > 0 || cfg.MinHeight > 0 {
 		xdgToplevelSetMinSize(w.xdgToplevel, int32(cfg.MinWidth), int32(cfg.MinHeight))
 	}
@@ -660,6 +668,8 @@ func (w *window) PollEvents() {
 	for wlDisplayPrepareRead(w.display) != 0 {
 		wlDisplayDispatchPending(w.display)
 	}
+	// Issue deferred window-state requests now, outside any dispatch callback.
+	w.applyPending()
 	wlDisplayFlush(w.display)
 	if fdReadable(wlDisplayGetFd(w.display)) {
 		wlDisplayReadEvents(w.display)
@@ -667,11 +677,55 @@ func (w *window) PollEvents() {
 		wlDisplayCancelRead(w.display)
 	}
 	wlDisplayDispatchPending(w.display)
+	if w.applyPending() {
+		wlDisplayFlush(w.display)
+	}
 }
 
 func (w *window) SetTitle(title string) {
 	xdgToplevelSetTitle(w.xdgToplevel, title)
 	wlDisplayFlush(w.display)
+}
+
+// Minimize and ToggleMaximize only record intent; the xdg_toplevel request is
+// issued from PollEvents (applyPending). These are typically called from inside
+// a libwayland event-dispatch callback, and marshalling a request re-entrantly
+// during dispatch corrupts the output buffer — so the work is deferred to the
+// main loop instead.
+func (w *window) Minimize() {
+	w.pendingMinimize = true
+}
+
+func (w *window) ToggleMaximize() {
+	w.pendingToggleMaximize = true
+}
+
+// applyPending issues any deferred window-state requests. It must be called
+// from the main loop, never from within an event-dispatch callback. Returns
+// true if it marshalled anything (so the caller can flush).
+func (w *window) applyPending() bool {
+	if w.xdgToplevel == nil {
+		w.pendingMinimize = false
+		w.pendingToggleMaximize = false
+		return false
+	}
+	did := false
+	if w.pendingMinimize {
+		w.pendingMinimize = false
+		xdgToplevelSetMinimized(w.xdgToplevel)
+		did = true
+	}
+	if w.pendingToggleMaximize {
+		w.pendingToggleMaximize = false
+		if w.maximized {
+			xdgToplevelUnsetMaximized(w.xdgToplevel)
+		} else {
+			xdgToplevelSetMaximized(w.xdgToplevel)
+		}
+		w.maximized = !w.maximized
+		did = true
+	}
+	return did
 }
 
 func (w *window) SetCursor(shape wtypes.CursorShape) {
@@ -1133,6 +1187,29 @@ func xdgToplevelSetMaxSize(tl unsafe.Pointer, w, h int32) {
 			unsafe.Pointer(&argsPtr),
 		})
 }
+
+// xdgToplevelNoArg sends an argument-less xdg_toplevel request (set_maximized,
+// unset_maximized, set_minimized).
+func xdgToplevelNoArg(tl unsafe.Pointer, opcode uint32) {
+	// The request has no arguments, but pass a valid pinned (unused) wl_argument
+	// slot rather than a NULL pointer, matching the proven multi-arg requests.
+	var args [1]wlArgument
+	var pin runtime.Pinner
+	pin.Pin(&args[0])
+	defer pin.Unpin()
+	argsPtr := unsafe.Pointer(&args[0])
+	var result int32
+	ffi.CallFunction(&cifWlProxyMarshalArray, _wlProxyMarshalArray, unsafe.Pointer(&result),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&tl),
+			unsafe.Pointer(&opcode),
+			unsafe.Pointer(&argsPtr),
+		})
+}
+
+func xdgToplevelSetMaximized(tl unsafe.Pointer)   { xdgToplevelNoArg(tl, opcXdgToplevelSetMaximized) }
+func xdgToplevelUnsetMaximized(tl unsafe.Pointer) { xdgToplevelNoArg(tl, opcXdgToplevelUnsetMaximized) }
+func xdgToplevelSetMinimized(tl unsafe.Pointer)   { xdgToplevelNoArg(tl, opcXdgToplevelSetMinimized) }
 
 func wlSurfaceCommit(surf unsafe.Pointer) {
 	var result int32
