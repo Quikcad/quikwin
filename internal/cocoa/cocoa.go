@@ -9,10 +9,41 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/Quikcad/quikwin/internal/cocoa/objc"
 	"github.com/Quikcad/quikwin/internal/wtypes"
-	"github.com/go-webgpu/goffi/ffi"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
 )
+
+// TitlebarStyle controls the macOS titlebar appearance. Canonical home —
+// pkg/window/cocoa re-exports it via type alias. Importing pkg/window/cocoa
+// from here would cycle through pkg/window → internal/common → internal/cocoa.
+type TitlebarStyle uint8
+
+const (
+	TitlebarDefault     TitlebarStyle = iota
+	TitlebarHidden                    // no titlebar, no traffic lights
+	TitlebarTransparent               // transparent titlebar, content extends underneath
+)
+
+// MenuItem represents one item in a native macOS menu. Canonical home; the
+// public pkg/window/cocoa package re-exports it via type alias.
+type MenuItem struct {
+	Label     string
+	Shortcut  string
+	Action    func()
+	Children  []MenuItem
+	Separator bool
+}
+
+// init pins the main goroutine to the OS thread that started the runtime.
+// On darwin that's the process's main thread (thread 0) — the only thread
+// AppKit will accept NSWindow/NSApplication calls on. Doing this from a later
+// hook (e.g. inside New) is too late: by then Go may have migrated the main
+// goroutine onto a worker thread and AppKit raises
+// NSInternalInconsistencyException.
+func init() {
+	runtime.LockOSThread()
+}
 
 // ---------------------------------------------------------------------------
 // Selectors (registered once on first use)
@@ -65,19 +96,29 @@ var (
 	selUnhide                         unsafe.Pointer
 	selPerformWindowDragWithEvent     unsafe.Pointer
 	selCurrentEvent                   unsafe.Pointer
+	selLocationInWindow               unsafe.Pointer
+	selSetAcceptsMouseMovedEvents     unsafe.Pointer
+	selFinishLaunching                unsafe.Pointer
+	selIsKeyWindow                    unsafe.Pointer
+	selFrame                          unsafe.Pointer
+	selMiniaturize                    unsafe.Pointer
+	selZoom                           unsafe.Pointer
+	selIsZoomed                       unsafe.Pointer
+	selToggleFullScreen               unsafe.Pointer
+	selStyleMask                      unsafe.Pointer
+	selSetCollectionBehavior          unsafe.Pointer
+	selSetOpaque                      unsafe.Pointer
+	selSetBackgroundColor             unsafe.Pointer
+	selClearColor                     unsafe.Pointer
+	selSetCornerRadius                unsafe.Pointer
+	selSetMasksToBounds               unsafe.Pointer
 
 	selsOnce sync.Once
 )
 
 func initSels() {
 	selsOnce.Do(func() {
-		reg := func(name string) unsafe.Pointer {
-			p := bstr(name)
-			var r unsafe.Pointer
-			ffi.CallFunction(&cifSelRegister, _selRegisterName, unsafe.Pointer(&r),
-				[]unsafe.Pointer{unsafe.Pointer(&p)})
-			return r
-		}
+		reg := objc.SelRegister
 		selInit = reg("init")
 		selAlloc = reg("alloc")
 		selRelease = reg("release")
@@ -124,102 +165,29 @@ func initSels() {
 		selUnhide = reg("unhide")
 		selPerformWindowDragWithEvent = reg("performWindowDragWithEvent:")
 		selCurrentEvent = reg("currentEvent")
+		selLocationInWindow = reg("locationInWindow")
+		selSetAcceptsMouseMovedEvents = reg("setAcceptsMouseMovedEvents:")
+		selFinishLaunching = reg("finishLaunching")
+		selIsKeyWindow = reg("isKeyWindow")
+		selFrame = reg("frame")
+		selMiniaturize = reg("miniaturize:")
+		selZoom = reg("zoom:")
+		selIsZoomed = reg("isZoomed")
+		selToggleFullScreen = reg("toggleFullScreen:")
+		selStyleMask = reg("styleMask")
+		selSetCollectionBehavior = reg("setCollectionBehavior:")
+		selSetOpaque = reg("setOpaque:")
+		selSetBackgroundColor = reg("setBackgroundColor:")
+		selClearColor = reg("clearColor")
+		selSetCornerRadius = reg("setCornerRadius:")
+		selSetMasksToBounds = reg("setMasksToBounds:")
 	})
 }
 
-func bstr(s string) *byte {
-	b := make([]byte, len(s)+1)
-	copy(b, s)
-	return &b[0]
-}
-
-// ---------------------------------------------------------------------------
-// ObjC message send helpers
-// ---------------------------------------------------------------------------
-
-func msgSend0(recv, sel unsafe.Pointer) unsafe.Pointer {
-	var ret unsafe.Pointer
-	ffi.CallFunction(&cifMsg0, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
-	return ret
-}
-
-func msgSend1p(recv, sel, arg unsafe.Pointer) unsafe.Pointer {
-	var ret unsafe.Pointer
-	ffi.CallFunction(&cifMsg1p, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&arg)})
-	return ret
-}
-
-func msgSend1pVoid(recv, sel, arg unsafe.Pointer) {
-	ffi.CallFunction(&cifMsg1pVoid, _objcMsgSend, nil,
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&arg)})
-}
-
-func msgSend1iVoid(recv, sel unsafe.Pointer, v int64) {
-	ffi.CallFunction(&cifMsg1iVoid, _objcMsgSend, nil,
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&v)})
-}
-
-func msgSend1bVoid(recv, sel unsafe.Pointer, v int32) {
-	ffi.CallFunction(&cifMsg1bVoid, _objcMsgSend, nil,
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&v)})
-}
-
-func msgSend0i(recv, sel unsafe.Pointer) int64 {
-	var ret int64
-	ffi.CallFunction(&cifMsg0i, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
-	return ret
-}
-
-func msgSend0u(recv, sel unsafe.Pointer) uint64 {
-	var ret uint64
-	ffi.CallFunction(&cifMsg0u, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
-	return ret
-}
-
-func msgSend0f(recv, sel unsafe.Pointer) float64 {
-	var ret float64
-	// arm64: plain objc_msgSend; x86_64: double returned in XMM0, libffi reads
-	// it correctly with DoubleType return descriptor.
-	ffi.CallFunction(&cifMsg0f, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
-	return ret
-}
-
-func msgSend1fVoid(recv, sel unsafe.Pointer, v float64) {
-	ffi.CallFunction(&cifMsg1fVoid, _objcMsgSend, nil,
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&v)})
-}
-
-func msgSend2fVoid(recv, sel unsafe.Pointer, x, y float64) {
-	ffi.CallFunction(&cifMsg2fVoid, _objcMsgSend, nil,
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&x), unsafe.Pointer(&y)})
-}
-
-func msgSendInitWindow(recv, sel unsafe.Pointer, x, y, w, h float64, style, backing uint64, deferred int32) unsafe.Pointer {
-	var ret unsafe.Pointer
-	ffi.CallFunction(&cifMsgInitWindow, _objcMsgSend, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel),
-			unsafe.Pointer(&x), unsafe.Pointer(&y), unsafe.Pointer(&w), unsafe.Pointer(&h),
-			unsafe.Pointer(&style), unsafe.Pointer(&backing), unsafe.Pointer(&deferred)})
-	return ret
-}
-
 func nsString(s string) unsafe.Pointer {
-	p := bstr(s)
-	cls := getClass("NSString")
-	return msgSend1p(cls, selStringWithUTF8String, unsafe.Pointer(p))
-}
-
-func getClass(name string) unsafe.Pointer {
-	p := bstr(name)
-	var ret unsafe.Pointer
-	ffi.CallFunction(&cifGetClass, _objcGetClass, unsafe.Pointer(&ret),
-		[]unsafe.Pointer{unsafe.Pointer(&p)})
-	return ret
+	p := objc.Bstr(s)
+	cls := objc.GetClass("NSString")
+	return objc.MsgSend1p(cls, selStringWithUTF8String, unsafe.Pointer(p))
 }
 
 // ---------------------------------------------------------------------------
@@ -233,14 +201,44 @@ var (
 
 func initApp() {
 	nsAppOnce.Do(func() {
-		cls := getClass("NSApplication")
-		nsApp = msgSend0(cls, selSharedApplication)
-		var policy int64 // NSApplicationActivationPolicyRegular = 0
-		ffi.CallFunction(&cifMsg1iVoid, _objcMsgSend, nil,
-			[]unsafe.Pointer{unsafe.Pointer(&nsApp), unsafe.Pointer(&selSetActivationPolicy), unsafe.Pointer(&policy)})
-		var yes int32 = 1
-		ffi.CallFunction(&cifMsg1bVoid, _objcMsgSend, nil,
-			[]unsafe.Pointer{unsafe.Pointer(&nsApp), unsafe.Pointer(&selActivateIgnoringOtherApps), unsafe.Pointer(&yes)})
+		cls := objc.GetClass("NSApplication")
+		nsApp = objc.MsgSend0(cls, selSharedApplication)
+		objc.MsgSend1iVoid(nsApp, selSetActivationPolicy, 0) // NSApplicationActivationPolicyRegular = 0
+		// finishLaunching does what -[NSApplication run] would do up to the
+		// first runloop iteration: posts NSApplicationDidFinishLaunching, wires
+		// up the delegate auto-observer machinery (windowDidBecomeKey: etc.)
+		// and prepares the app for event delivery. Skipping it leaves AppKit
+		// in a partially-launched state where window-key notifications never
+		// reach delegate methods.
+		objc.MsgSend0(nsApp, selFinishLaunching)
+		objc.MsgSend1bVoid(nsApp, selActivateIgnoringOtherApps, 1)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// NSWindow subclass
+// ---------------------------------------------------------------------------
+
+// quikwinWindowClass is an NSWindow subclass that forces canBecomeKeyWindow
+// and canBecomeMainWindow to YES. NSWindow's defaults return NO for
+// borderless windows (no NSWindowStyleMaskTitled), so a custom-chrome window
+// would otherwise never become key — meaning no windowDidBecomeKey:/
+// windowDidResignKey: notifications and no keyboard focus.
+var (
+	quikwinWindowClass     unsafe.Pointer
+	quikwinWindowClassOnce sync.Once
+)
+
+func initWindowClass() {
+	quikwinWindowClassOnce.Do(func() {
+		super := objc.GetClass("NSWindow")
+		quikwinWindowClass = objc.AllocateClassPair(super, "QuikwinWindow")
+		// BOOL methods: encoding "c@:" = signed char return, id self, SEL _cmd.
+		objc.AddMethod(quikwinWindowClass, "canBecomeKeyWindow", "c@:",
+			func(_self, _cmd uintptr) bool { return true })
+		objc.AddMethod(quikwinWindowClass, "canBecomeMainWindow", "c@:",
+			func(_self, _cmd uintptr) bool { return true })
+		objc.RegisterClassPair(quikwinWindowClass)
 	})
 }
 
@@ -277,11 +275,8 @@ func unregisterDelegate(self unsafe.Pointer) {
 
 func initDelegateClass() {
 	delegateClassOnce.Do(func() {
-		superCls := getClass("NSObject")
-		className := bstr("QuikwinWindowDelegate")
-		var extraBytes uint64
-		ffi.CallFunction(&cifAllocClassPair, _objcAllocateClassPair, unsafe.Pointer(&delegateClass),
-			[]unsafe.Pointer{unsafe.Pointer(&superCls), unsafe.Pointer(&className), unsafe.Pointer(&extraBytes)})
+		superCls := objc.GetClass("NSObject")
+		delegateClass = objc.AllocateClassPair(superCls, "QuikwinWindowDelegate")
 
 		addMethod("windowWillClose:", "v@:@", func(self, _cmd, notif uintptr) {
 			if w := lookupDelegate(unsafe.Pointer(self)); w != nil {
@@ -292,10 +287,19 @@ func initDelegateClass() {
 			}
 		})
 		addMethod("windowDidResize:", "v@:@", func(self, _cmd, notif uintptr) {
-			if w := lookupDelegate(unsafe.Pointer(self)); w != nil {
-				if fn := w.onLiveResize; fn != nil {
-					fn()
-				}
+			w := lookupDelegate(unsafe.Pointer(self))
+			if w == nil {
+				return
+			}
+			view := objc.MsgSend0(w.nswin, selContentView)
+			frame := objc.MsgSend0Rect(view, selFrame)
+			w.width = uint32(frame.W)
+			w.height = uint32(frame.H)
+			if fn := w.onResize; fn != nil {
+				fn(w.width, w.height)
+			}
+			if fn := w.onLiveResize; fn != nil {
+				fn()
 			}
 		})
 		addMethod("windowDidBecomeKey:", "v@:@", func(self, _cmd, notif uintptr) {
@@ -316,23 +320,12 @@ func initDelegateClass() {
 			return 1 // YES
 		})
 
-		ffi.CallFunction(&cifRegisterClassPair, _objcRegisterClassPair, nil,
-			[]unsafe.Pointer{unsafe.Pointer(&delegateClass)})
+		objc.RegisterClassPair(delegateClass)
 	})
 }
 
-// addMethod registers a Go callback as an ObjC IMP on delegateClass.
-// All params must be uintptr-sized (ObjC always passes id/SEL as pointer-width words).
 func addMethod(selName, typeStr string, fn any) {
-	sel := bstr(selName)
-	var selPtr unsafe.Pointer
-	ffi.CallFunction(&cifSelRegister, _selRegisterName, unsafe.Pointer(&selPtr),
-		[]unsafe.Pointer{unsafe.Pointer(&sel)})
-
-	imp := unsafe.Pointer(ffi.NewCallback(fn))
-	ts := bstr(typeStr)
-	ffi.CallFunction(&cifClassAddMethod, _classAddMethod, nil,
-		[]unsafe.Pointer{unsafe.Pointer(&delegateClass), unsafe.Pointer(&selPtr), unsafe.Pointer(&imp), unsafe.Pointer(&ts)})
+	objc.AddMethod(delegateClass, selName, typeStr, fn)
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +358,9 @@ const (
 	nsWindowStyleMaskMiniaturizable      uint64 = 1 << 2
 	nsWindowStyleMaskResizable           uint64 = 1 << 3
 	nsWindowStyleMaskFullSizeContentView uint64 = 1 << 15
+	nsWindowStyleMaskFullScreen          uint64 = 1 << 14
+
+	nsWindowCollectionBehaviorFullScreenPrimary uint64 = 1 << 7
 )
 
 const nsBackingStoreBuffered uint64 = 2
@@ -538,14 +534,13 @@ type window struct {
 }
 
 func New(cfg *wtypes.Config) (*window, error) {
-	if err := ensureLoaded(); err != nil {
+	if err := objc.Load(); err != nil {
 		return nil, err
 	}
 	initSels()
 	initApp()
+	initWindowClass()
 	initDelegateClass()
-
-	runtime.LockOSThread()
 
 	width, height := cfg.Width, cfg.Height
 	minW, minH := cfg.MinWidth, cfg.MinHeight
@@ -558,51 +553,54 @@ func New(cfg *wtypes.Config) (*window, error) {
 		style |= nsWindowStyleMaskResizable
 	}
 
-	nsCls := getClass("NSWindow")
-	raw := msgSend0(nsCls, selAlloc)
-	nswin := msgSendInitWindow(raw, selInitWithContentRect,
+	raw := objc.MsgSend0(quikwinWindowClass, selAlloc)
+	nswin := objc.MsgSendInitWindow(raw, selInitWithContentRect,
 		0, 0, float64(width), float64(height),
 		style, nsBackingStoreBuffered, 0)
 	if nswin == nil {
 		return nil, fmt.Errorf("quikwin/cocoa: NSWindow init failed")
 	}
 
-	msgSend1bVoid(nswin, selSetReleasedWhenClosed, 0)
-	msgSend1pVoid(nswin, selSetTitle, nsString(cfg.Title))
+	objc.MsgSend1bVoid(nswin, selSetReleasedWhenClosed, 0)
+	objc.MsgSend1bVoid(nswin, selSetAcceptsMouseMovedEvents, 1)
+	// Enable native macOS full-screen (green button enters a new Space rather
+	// than just zooming within the current desktop).
+	objc.MsgSend1iVoid(nswin, selSetCollectionBehavior, int64(nsWindowCollectionBehaviorFullScreenPrimary))
+	objc.MsgSend1pVoid(nswin, selSetTitle, nsString(cfg.Title))
 
 	if minW > 0 || minH > 0 {
-		msgSend2fVoid(nswin, selSetMinSize, float64(minW), float64(minH))
+		objc.MsgSend2fVoid(nswin, selSetMinSize, float64(minW), float64(minH))
 	}
 
-	view := msgSend0(nswin, selContentView)
+	view := objc.MsgSend0(nswin, selContentView)
 	// Create a CAMetalLayer and attach it as the view's backing layer before
 	// calling setWantsLayer:YES. This gives MoltenVK a concrete Metal layer to
 	// use when creating a VkSurfaceKHR via VK_EXT_metal_surface. If we only
 	// call setWantsLayer:YES the view gets a plain CALayer which MoltenVK
 	// cannot use and vkGetPhysicalDeviceSurfaceCapabilitiesKHR returns
 	// VK_ERROR_SURFACE_LOST_KHR.
-	metalLayerCls := getClass("CAMetalLayer")
-	metalLayer := msgSend0(metalLayerCls, selLayer) // [CAMetalLayer layer]
+	metalLayerCls := objc.GetClass("CAMetalLayer")
+	metalLayer := objc.MsgSend0(metalLayerCls, selLayer) // [CAMetalLayer layer]
 	if metalLayer == nil {
 		// Fallback: alloc+init if the class method is unavailable.
-		metalLayer = msgSend0(msgSend0(metalLayerCls, selAlloc), selInit)
+		metalLayer = objc.MsgSend0(objc.MsgSend0(metalLayerCls, selAlloc), selInit)
 	}
 	if metalLayer != nil {
-		msgSend1pVoid(view, selSetLayer, metalLayer) // [view setLayer:metalLayer]
+		objc.MsgSend1pVoid(view, selSetLayer, metalLayer) // [view setLayer:metalLayer]
 	}
-	msgSend1bVoid(view, selSetWantsLayer, 1)
+	objc.MsgSend1bVoid(view, selSetWantsLayer, 1)
 
-	screen := msgSend0(getClass("NSScreen"), selMainScreen)
+	screen := objc.MsgSend0(objc.GetClass("NSScreen"), selMainScreen)
 	scale := float32(1.0)
 	if screen != nil {
-		scale = float32(msgSend0f(screen, selBackingScaleFactor))
+		scale = float32(objc.MsgSend0f(screen, selBackingScaleFactor))
 	}
 	// Set contentsScale on the Metal layer so the drawable size matches
 	// physical pixels. Without this it defaults to 1.0 and every drawable
 	// pixel maps to backingScaleFactor display pixels, making all content
 	// look scale-factor× too large on Retina displays.
 	if metalLayer != nil && scale > 0 {
-		msgSend1fVoid(metalLayer, selSetContentsScale, float64(scale))
+		objc.MsgSend1fVoid(metalLayer, selSetContentsScale, float64(scale))
 	}
 
 	w := &window{
@@ -615,12 +613,12 @@ func New(cfg *wtypes.Config) (*window, error) {
 		styleMask:  style,
 	}
 
-	del := msgSend0(msgSend0(delegateClass, selAlloc), selInit)
+	del := objc.MsgSend0(objc.MsgSend0(delegateClass, selAlloc), selInit)
 	registerDelegate(del, w)
 	w.delegate = del
-	msgSend1pVoid(nswin, selSetDelegate, del)
+	objc.MsgSend1pVoid(nswin, selSetDelegate, del)
 
-	msgSend1pVoid(nswin, selMakeKeyAndOrderFront, nil)
+	objc.MsgSend1pVoid(nswin, selMakeKeyAndOrderFront, nil)
 	return w, nil
 }
 
@@ -633,35 +631,31 @@ func (w *window) PollEvents() {
 		return
 	}
 	mode := nsString("kCFRunLoopDefaultMode")
-	dateCls := getClass("NSDate")
-	distantPast := msgSend0(dateCls, selDistantPast)
-	mask := nsEventMaskAny
-	var dequeue int32 = 1
+	dateCls := objc.GetClass("NSDate")
+	distantPast := objc.MsgSend0(dateCls, selDistantPast)
+	mask := uint64(nsEventMaskAny)
 
 	for {
-		var event unsafe.Pointer
-		ffi.CallFunction(&cifNextEvent, _objcMsgSend, unsafe.Pointer(&event),
-			[]unsafe.Pointer{unsafe.Pointer(&nsApp), unsafe.Pointer(&selNextEventMatchingMask),
-				unsafe.Pointer(&mask), unsafe.Pointer(&distantPast), unsafe.Pointer(&mode), unsafe.Pointer(&dequeue)})
+		event := objc.NextEvent(nsApp, selNextEventMatchingMask, mask, distantPast, mode, 1)
 		if event == nil {
 			break
 		}
 		w.handleEvent(event)
-		msgSend1pVoid(nsApp, selSendEvent, event)
+		objc.MsgSend1pVoid(nsApp, selSendEvent, event)
 	}
-	msgSend0(nsApp, selUpdateWindows)
+	objc.MsgSend0(nsApp, selUpdateWindows)
 }
 
 func (w *window) handleEvent(event unsafe.Pointer) {
-	evType := msgSend0i(event, selType)
-	flags := msgSend0u(event, selModifierFlags)
+	evType := objc.MsgSend0i(event, selType)
+	flags := objc.MsgSend0u(event, selModifierFlags)
 	mods := modFlagsToMod(flags)
 
 	switch evType {
 	case nsEventTypeKeyDown, nsEventTypeKeyUp:
-		vkCode := uint64(msgSend0i(event, selKeyCode))
+		vkCode := uint64(objc.MsgSend0i(event, selKeyCode))
 		key := macKeyToKey(vkCode)
-		isRepeat := msgSend0i(event, selIsARepeat) != 0
+		isRepeat := objc.MsgSend0i(event, selIsARepeat) != 0
 		action := wtypes.Press
 		if evType == nsEventTypeKeyUp {
 			action = wtypes.Release
@@ -672,8 +666,8 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 			fn(key, action, mods)
 		}
 		if evType == nsEventTypeKeyDown {
-			if nsChars := msgSend0(event, selCharacters); nsChars != nil {
-				if utf8ptr := msgSend0(nsChars, selUTF8String); utf8ptr != nil {
+			if nsChars := objc.MsgSend0(event, selCharacters); nsChars != nil {
+				if utf8ptr := objc.MsgSend0(nsChars, selUTF8String); utf8ptr != nil {
 					for _, r := range goString(utf8ptr) {
 						if fn := w.onChar; fn != nil {
 							fn(r)
@@ -684,7 +678,7 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 		}
 
 	case nsEventTypeFlagsChanged:
-		vkCode := uint64(msgSend0i(event, selKeyCode))
+		vkCode := uint64(objc.MsgSend0i(event, selKeyCode))
 		key := macKeyToKey(vkCode)
 		if key == wtypes.KeyUnknown {
 			return
@@ -716,7 +710,7 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 		if evType == nsEventTypeLeftMouseDown {
 			if fn := w.onHitTest; fn != nil {
 				if fn(w.mouseX, w.mouseY) == wtypes.HitTestDrag {
-					msgSend1pVoid(w.nswin, selPerformWindowDragWithEvent, event)
+					objc.MsgSend1pVoid(w.nswin, selPerformWindowDragWithEvent, event)
 					return
 				}
 			}
@@ -734,16 +728,11 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 		nsEventTypeLeftMouseDragged,
 		nsEventTypeRightMouseDragged,
 		nsEventTypeOtherMouseDragged:
-		dx := msgSend0f(event, selDeltaX)
-		dy := msgSend0f(event, selDeltaY)
-		w.mouseX += dx
-		w.mouseY += dy
-		if w.mouseX < 0 {
-			w.mouseX = 0
-		}
-		if w.mouseY < 0 {
-			w.mouseY = 0
-		}
+		pt := objc.MsgSend0Point(event, selLocationInWindow)
+		// Cocoa window coords: origin bottom-left, in points. Flip Y to match
+		// the top-left convention exposed by Window.OnMouseMove.
+		w.mouseX = pt.X
+		w.mouseY = float64(w.height) - pt.Y
 		inside := w.mouseX >= 0 && w.mouseX < float64(w.width) &&
 			w.mouseY >= 0 && w.mouseY < float64(w.height)
 		if inside && !w.mouseInWindow {
@@ -754,13 +743,18 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 		} else if !inside {
 			w.mouseInWindow = false
 		}
-		if fn := w.onMouseMove; fn != nil {
-			fn(w.mouseX, w.mouseY)
+		// Cocoa keeps delivering mouseMoved/dragged events for points outside
+		// the content rect (titlebar, window shadow, drag-out). Only forward
+		// when the cursor is actually inside the content area.
+		if inside {
+			if fn := w.onMouseMove; fn != nil {
+				fn(w.mouseX, w.mouseY)
+			}
 		}
 
 	case nsEventTypeScrollWheel:
-		dx := msgSend0f(event, selScrollingDeltaX)
-		dy := msgSend0f(event, selScrollingDeltaY)
+		dx := objc.MsgSend0f(event, selScrollingDeltaX)
+		dy := objc.MsgSend0f(event, selScrollingDeltaY)
 		if fn := w.onScroll; fn != nil {
 			fn(dx, dy)
 		}
@@ -774,7 +768,7 @@ func mouseButton(evType int64, event unsafe.Pointer) wtypes.Button {
 	case nsEventTypeRightMouseDown, nsEventTypeRightMouseUp, nsEventTypeRightMouseDragged:
 		return wtypes.ButtonRight
 	default:
-		switch msgSend0i(event, selButtonNumber) {
+		switch objc.MsgSend0i(event, selButtonNumber) {
 		case 2:
 			return wtypes.ButtonMiddle
 		case 3:
@@ -804,15 +798,15 @@ func goString(p unsafe.Pointer) string {
 // ---------------------------------------------------------------------------
 
 func (w *window) SetTitle(title string) {
-	msgSend1pVoid(w.nswin, selSetTitle, nsString(title))
+	objc.MsgSend1pVoid(w.nswin, selSetTitle, nsString(title))
 }
 
 func (w *window) SetMinSize(mw, mh uint32) {
-	msgSend2fVoid(w.nswin, selSetMinSize, float64(mw), float64(mh))
+	objc.MsgSend2fVoid(w.nswin, selSetMinSize, float64(mw), float64(mh))
 }
 
 func (w *window) SetSize(sw, sh uint32) {
-	msgSend2fVoid(w.nswin, selSetContentSize, float64(sw), float64(sh))
+	objc.MsgSend2fVoid(w.nswin, selSetContentSize, float64(sw), float64(sh))
 	w.width = sw
 	w.height = sh
 }
@@ -824,8 +818,8 @@ func (w *window) HideCursor() {
 		return
 	}
 	w.cursorHidden = true
-	cls := getClass("NSCursor")
-	msgSend0(cls, selHide)
+	cls := objc.GetClass("NSCursor")
+	objc.MsgSend0(cls, selHide)
 }
 
 func (w *window) ShowCursor() {
@@ -833,14 +827,14 @@ func (w *window) ShowCursor() {
 		return
 	}
 	w.cursorHidden = false
-	cls := getClass("NSCursor")
-	msgSend0(cls, selUnhide)
+	cls := objc.GetClass("NSCursor")
+	objc.MsgSend0(cls, selUnhide)
 }
 
 func (w *window) BeginDrag() {
-	event := msgSend0(nsApp, selCurrentEvent)
+	event := objc.MsgSend0(nsApp, selCurrentEvent)
 	if event != nil {
-		msgSend1pVoid(w.nswin, selPerformWindowDragWithEvent, event)
+		objc.MsgSend1pVoid(w.nswin, selPerformWindowDragWithEvent, event)
 	}
 }
 
@@ -849,8 +843,8 @@ func (w *window) Destroy() {
 		return
 	}
 	unregisterDelegate(w.delegate)
-	msgSend0(w.nswin, selClose)
-	msgSend0(w.nswin, selRelease)
+	objc.MsgSend0(w.nswin, selClose)
+	objc.MsgSend0(w.nswin, selRelease)
 	w.nswin = nil
 }
 
@@ -874,28 +868,20 @@ func (w *window) OnCursorEnter(fn func(float64, float64))                   { w.
 // CocoaWindow interface methods
 // ---------------------------------------------------------------------------
 
-type TitlebarStyle = uint8
-
-const (
-	TitlebarDefault     TitlebarStyle = 0
-	TitlebarHidden      TitlebarStyle = 1
-	TitlebarTransparent TitlebarStyle = 2
-)
-
 func (w *window) SetTitlebarStyle(style TitlebarStyle) {
 	switch style {
 	case TitlebarHidden:
 		newStyle := w.styleMask | nsWindowStyleMaskFullSizeContentView
-		msgSend1iVoid(w.nswin, selSetStyleMask, int64(newStyle))
-		msgSend1bVoid(w.nswin, selSetTitlebarAppearsTransparent, 1)
-		msgSend1iVoid(w.nswin, selSetTitleVisibility, 1) // NSWindowTitleHidden = 1
+		objc.MsgSend1iVoid(w.nswin, selSetStyleMask, int64(newStyle))
+		objc.MsgSend1bVoid(w.nswin, selSetTitlebarAppearsTransparent, 1)
+		objc.MsgSend1iVoid(w.nswin, selSetTitleVisibility, 1) // NSWindowTitleHidden = 1
 	case TitlebarTransparent:
 		newStyle := w.styleMask | nsWindowStyleMaskFullSizeContentView
-		msgSend1iVoid(w.nswin, selSetStyleMask, int64(newStyle))
-		msgSend1bVoid(w.nswin, selSetTitlebarAppearsTransparent, 1)
+		objc.MsgSend1iVoid(w.nswin, selSetStyleMask, int64(newStyle))
+		objc.MsgSend1bVoid(w.nswin, selSetTitlebarAppearsTransparent, 1)
 	default:
-		msgSend1bVoid(w.nswin, selSetTitlebarAppearsTransparent, 0)
-		msgSend1iVoid(w.nswin, selSetTitleVisibility, 0)
+		objc.MsgSend1bVoid(w.nswin, selSetTitlebarAppearsTransparent, 0)
+		objc.MsgSend1iVoid(w.nswin, selSetTitleVisibility, 0)
 	}
 }
 
@@ -904,22 +890,55 @@ func (w *window) SetTitleVisible(visible bool) {
 	if !visible {
 		v = 1 // NSWindowTitleHidden = 1
 	}
-	msgSend1iVoid(w.nswin, selSetTitleVisibility, v)
+	objc.MsgSend1iVoid(w.nswin, selSetTitleVisibility, v)
 }
 
 func (w *window) SetTrafficLightsOffset(x, y float32) {
 	for _, btn := range []int64{nsWindowCloseButton, nsWindowMiniaturizeButton, nsWindowZoomButton} {
-		b := msgSend1p(w.nswin, selStandardWindowButton, unsafe.Pointer(&btn))
+		b := objc.MsgSend1p(w.nswin, selStandardWindowButton, unsafe.Pointer(&btn))
 		if b == nil {
 			continue
 		}
 		fx := float64(x) + float64(btn)*20
 		fy := float64(y)
-		msgSend2fVoid(b, selSetFrameOrigin, fx, fy)
+		objc.MsgSend2fVoid(b, selSetFrameOrigin, fx, fy)
 	}
 }
 
-func (w *window) SetMenuBar(_ []any) {}
+func (w *window) SetMenuBar(_ []MenuItem) {}
+
+// Minimize sends -[NSWindow miniaturize:] (sender unused).
+func (w *window) Minimize() {
+	objc.MsgSend1pVoid(w.nswin, selMiniaturize, nil)
+}
+
+// ToggleMaximize toggles native macOS full screen, matching the green
+// traffic-light button: the window animates into its own Space rather than
+// just zooming within the current desktop.
+func (w *window) ToggleMaximize() {
+	objc.MsgSend1pVoid(w.nswin, selToggleFullScreen, nil)
+}
+
+// IsMaximized reports whether the window is currently in full-screen mode
+// (NSWindowStyleMaskFullScreen present in the live style mask).
+func (w *window) IsMaximized() bool {
+	return objc.MsgSend0u(w.nswin, selStyleMask)&nsWindowStyleMaskFullScreen != 0
+}
+
+// SetCornerRadius applies a corner radius to the content view's backing layer
+// (the CAMetalLayer) and switches the window to a non-opaque/clear background
+// so the rounded corners aren't hidden by the system background fill. A radius
+// of 0 reverts to square corners.
+func (w *window) SetCornerRadius(r float64) {
+	if w.metalLayer == nil {
+		return
+	}
+	clear := objc.MsgSend0(objc.GetClass("NSColor"), selClearColor)
+	objc.MsgSend1bVoid(w.nswin, selSetOpaque, 0)
+	objc.MsgSend1pVoid(w.nswin, selSetBackgroundColor, clear)
+	objc.MsgSend1fVoid(w.metalLayer, selSetCornerRadius, r)
+	objc.MsgSend1bVoid(w.metalLayer, selSetMasksToBounds, 1)
+}
 
 // ---------------------------------------------------------------------------
 // Vulkan surface
