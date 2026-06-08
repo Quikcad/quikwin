@@ -1,6 +1,6 @@
-github.com/go-webgpu/goffi v0.5.0 h1:EuvVRiRn9qAfCkYYXbHs9gz8NY+zv2/OA1N7gi56UVE=
-github.com/go-webgpu/goffi v0.5.0/go.mod h1:wfoxNsJkU+5RFbV1kNN1kunhc1lFHuJKK3zpgx08/uM=
+github.com/go-webgpu/goffi v0.5.3 h1:Ckc94SdHO42bIb0oEapRIcv+jKjhjGJfb9zPEvNKC7U=
+github.com/go-webgpu/goffi v0.5.3/go.mod h1:wfoxNsJkU+5RFbV1kNN1kunhc1lFHuJKK3zpgx08/uM=
 github.com/lukem570/vulkan-go v1.4.352-0.20260509060031-79c0382f8653 h1:KZxc6tUJDDJw6Sb11YOFvE8jdRCzYUy/9O95uAVb9FY=
 github.com/lukem570/vulkan-go v1.4.352-0.20260509060031-79c0382f8653/go.mod h1:f2kZgWI4IOdAgKiwWT/yVVMo5WwuSUay/+LQtkF391Q=
-github.com/lukem570/wayland-go v0.0.0-20260521225942-0aa27d542fe0 h1:K9/6S/mHwo4YhZfIItnNWuVxw/4tyxHNUaVA756lLIg=
-github.com/lukem570/wayland-go v0.0.0-20260521225942-0aa27d542fe0/go.mod h1:wey9+qKttWj6EL4P3AB2436R7R5nfup6KS+aAOZSe2M=
+github.com/lukem570/wayland-go v0.0.0-20260608112318-ba07168d8b28 h1:xayP2LkGvd5aqpudxnZsnXn21HkIxN47Y3F293Agvvo=
+github.com/lukem570/wayland-go v0.0.0-20260608112318-ba07168d8b28/go.mod h1:tvm5pIOTZ/cCIngcnULnOKmninxU7yokVzvczXte5X0=
