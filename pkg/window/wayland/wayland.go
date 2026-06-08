@@ -15,4 +15,18 @@ type WaylandWindow interface {
 
 	// SetAppID sets the xdg-shell app_id (used by compositors for window grouping).
 	SetAppID(id string)
+
+	// IsMaximized reports the toplevel's maximized state from the latest
+	// compositor configure.
+	IsMaximized() bool
+
+	// ClientDecorated reports whether the client draws its own decorations
+	// (server-side decorations are off).
+	ClientDecorated() bool
+
+	// Minimize requests that the compositor minimize the window.
+	Minimize()
+
+	// ToggleMaximize toggles the window's maximized state.
+	ToggleMaximize()
 }

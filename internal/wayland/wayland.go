@@ -13,27 +13,27 @@ import (
 	"github.com/Quikcad/quikwin/internal/wtypes"
 	"github.com/go-webgpu/goffi/ffi"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
-	wl "github.com/lukem570/wayland-go/pkg/wayland"
 	xdg "github.com/lukem570/wayland-go/pkg/protocols/stable/xdgshell"
 	xdgdeco "github.com/lukem570/wayland-go/pkg/protocols/unstable/xdgdecorationunstablev1"
+	wl "github.com/lukem570/wayland-go/pkg/wayland"
 )
 
 type window struct {
 	mu sync.Mutex
 
 	// libwayland-client objects (unsafe.Pointer for Vulkan interop)
-	display     unsafe.Pointer // wl_display*
-	registry    unsafe.Pointer // wl_registry*
-	compositor  unsafe.Pointer // wl_compositor*
-	surface     unsafe.Pointer // wl_surface*
-	xdgWmBase   unsafe.Pointer // xdg_wm_base*
-	xdgSurface  unsafe.Pointer // xdg_surface*
-	xdgToplevel unsafe.Pointer // xdg_toplevel*
-	seat        unsafe.Pointer // wl_seat*
-	keyboard    unsafe.Pointer // wl_keyboard*
-	pointer     unsafe.Pointer // wl_pointer*
-	decorMgr    unsafe.Pointer // zxdg_decoration_manager_v1*
-	toplevelDecor unsafe.Pointer // zxdg_toplevel_decoration_v1*
+	display        unsafe.Pointer // wl_display*
+	registry       unsafe.Pointer // wl_registry*
+	compositor     unsafe.Pointer // wl_compositor*
+	surface        unsafe.Pointer // wl_surface*
+	xdgWmBase      unsafe.Pointer // xdg_wm_base*
+	xdgSurface     unsafe.Pointer // xdg_surface*
+	xdgToplevel    unsafe.Pointer // xdg_toplevel*
+	seat           unsafe.Pointer // wl_seat*
+	keyboard       unsafe.Pointer // wl_keyboard*
+	pointer        unsafe.Pointer // wl_pointer*
+	decorMgr       unsafe.Pointer // zxdg_decoration_manager_v1*
+	toplevelDecor  unsafe.Pointer // zxdg_toplevel_decoration_v1*
 	cursorShapeMgr unsafe.Pointer // wp_cursor_shape_manager_v1*
 	cursorShapeDev unsafe.Pointer // wp_cursor_shape_device_v1*
 
@@ -51,9 +51,9 @@ type window struct {
 	minWidth, minHeight uint32
 	appID               string
 
-	ptrX, ptrY    float64
-	ptrSerial     uint32
-	cursorSerial  uint32
+	ptrX, ptrY   float64
+	ptrSerial    uint32
+	cursorSerial uint32
 
 	resizable bool
 	decorated bool
@@ -297,6 +297,10 @@ func (w *window) setupListeners() {
 	addListener(w.xdgSurface, &w.surfaceListener[0], unsafe.Pointer(w))
 
 	toplevelConfigureCB := func(data, tl unsafe.Pointer, width, height int32, states unsafe.Pointer) {
+		maximized := wlArrayHasUint32(states, xdgStateMaximized)
+		w.mu.Lock()
+		w.maximized = maximized
+		w.mu.Unlock()
 		if width <= 0 || height <= 0 {
 			return
 		}
@@ -655,7 +659,40 @@ func (w *window) Size() (uint32, uint32) {
 	return w.width, w.height
 }
 
+// IsMaximized reports the toplevel's maximized state as last reported by the
+// compositor's configure event.
+func (w *window) IsMaximized() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.maximized
+}
+
+// ClientDecorated reports whether the window draws its own decorations (no
+// server-side titlebar/border), which is the case whenever border or titlebar
+// was disabled at creation.
+func (w *window) ClientDecorated() bool { return !w.decorated }
+
 func (w *window) Scale() float32 { return 1.0 }
+
+// xdgStateMaximized is xdg_toplevel.state.maximized.
+const xdgStateMaximized = uint32(1)
+
+// wlArrayHasUint32 reports whether the wl_array at p contains v. A wl_array is
+// {size, alloc uintptr; data unsafe.Pointer}; for xdg_toplevel configure the
+// data is a packed array of uint32 state values.
+func wlArrayHasUint32(p unsafe.Pointer, v uint32) bool {
+	if p == nil {
+		return false
+	}
+	size := *(*uintptr)(p)
+	data := *(*unsafe.Pointer)(unsafe.Add(p, 2*unsafe.Sizeof(uintptr(0))))
+	for off := uintptr(0); off+4 <= size; off += 4 {
+		if *(*uint32)(unsafe.Add(data, off)) == v {
+			return true
+		}
+	}
+	return false
+}
 
 func (w *window) ShouldClose() bool {
 	w.mu.Lock()
@@ -840,23 +877,23 @@ func (w *window) BeginDrag() {
 
 // --- Event registration ---
 
-func (w *window) OnResize(fn func(uint32, uint32))                              { w.onResize = fn }
-func (w *window) OnLiveResize(fn func())                                        { w.onLiveResize = fn }
-func (w *window) OnClose(fn func())                                             { w.onClose = fn }
-func (w *window) OnFocus(fn func(bool))                                         { w.onFocus = fn }
-func (w *window) OnKey(fn func(wtypes.Key, wtypes.Action, wtypes.Mod))          { w.onKey = fn }
-func (w *window) OnChar(fn func(rune))                                          { w.onChar = fn }
+func (w *window) OnResize(fn func(uint32, uint32))                     { w.onResize = fn }
+func (w *window) OnLiveResize(fn func())                               { w.onLiveResize = fn }
+func (w *window) OnClose(fn func())                                    { w.onClose = fn }
+func (w *window) OnFocus(fn func(bool))                                { w.onFocus = fn }
+func (w *window) OnKey(fn func(wtypes.Key, wtypes.Action, wtypes.Mod)) { w.onKey = fn }
+func (w *window) OnChar(fn func(rune))                                 { w.onChar = fn }
 func (w *window) OnMouseButton(fn func(wtypes.Button, wtypes.Action, wtypes.Mod)) {
 	w.onMouseButton = fn
 }
-func (w *window) OnMouseMove(fn func(float64, float64))  { w.onMouseMove = fn }
-func (w *window) OnScroll(fn func(float64, float64))     { w.onScroll = fn }
-func (w *window) OnDragBegin(fn func(float64, float64))  { w.onDragBegin = fn }
-func (w *window) OnDragMove(fn func(float64, float64))   { w.onDragMove = fn }
-func (w *window) OnDragEnd(fn func(float64, float64))    { w.onDragEnd = fn }
-func (w *window) OnDrop(fn func([]string))               { w.onDrop = fn }
+func (w *window) OnMouseMove(fn func(float64, float64))                    { w.onMouseMove = fn }
+func (w *window) OnScroll(fn func(float64, float64))                       { w.onScroll = fn }
+func (w *window) OnDragBegin(fn func(float64, float64))                    { w.onDragBegin = fn }
+func (w *window) OnDragMove(fn func(float64, float64))                     { w.onDragMove = fn }
+func (w *window) OnDragEnd(fn func(float64, float64))                      { w.onDragEnd = fn }
+func (w *window) OnDrop(fn func([]string))                                 { w.onDrop = fn }
 func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
-func (w *window) OnCursorEnter(fn func(float64, float64))                 { w.onCursorEnter = fn }
+func (w *window) OnCursorEnter(fn func(float64, float64))                  { w.onCursorEnter = fn }
 
 // --- WaylandWindow interface ---
 
@@ -1605,4 +1642,3 @@ func parseURIList(raw string) []string {
 	}
 	return paths
 }
-
