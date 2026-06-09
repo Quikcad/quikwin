@@ -33,7 +33,15 @@ type Window interface {
 	OnChar(fn func(ch rune))
 	OnMouseButton(fn func(button Button, action Action, mods Mod))
 	OnMouseMove(fn func(x, y float64))
-	OnScroll(fn func(dx, dy float64))
+	// OnScroll fires for both scroll wheels and trackpad scrolls. precise is
+	// true when the source reports continuous deltas (a trackpad) so callers
+	// can distinguish a pan gesture from a discrete wheel zoom.
+	OnScroll(fn func(dx, dy float64, precise bool))
+	// OnPinch fires for trackpad pinch (magnify) gestures. magnification is
+	// the fractional scale change for the frame; positive = grow, negative =
+	// shrink. The window emits no pinch events on platforms without gesture
+	// support; the callback is then never invoked.
+	OnPinch(fn func(magnification float64))
 	OnDragBegin(fn func(x, y float64))
 	OnDragMove(fn func(x, y float64))
 	OnDragEnd(fn func(x, y float64))

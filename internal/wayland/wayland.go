@@ -87,7 +87,8 @@ type window struct {
 	onChar        func(rune)
 	onMouseButton func(wtypes.Button, wtypes.Action, wtypes.Mod)
 	onMouseMove   func(float64, float64)
-	onScroll      func(float64, float64)
+	onScroll      func(float64, float64, bool)
+	onPinch       func(float64)
 	onDragBegin   func(float64, float64)
 	onDragMove    func(float64, float64)
 	onDragEnd     func(float64, float64)
@@ -550,9 +551,9 @@ func (w *window) HandlePointerAxis(e wayland.PointerAxisEvent) {
 	v := wlFixedToFloat(e.Value)
 	if fn := w.onScroll; fn != nil {
 		if e.Axis == wayland.PointerAxisVerticalScroll {
-			fn(0, -v/10)
+			fn(0, -v/10, false)
 		} else {
-			fn(v/10, 0)
+			fn(v/10, 0, false)
 		}
 	}
 }
@@ -802,7 +803,8 @@ func (w *window) OnMouseButton(fn func(wtypes.Button, wtypes.Action, wtypes.Mod)
 	w.onMouseButton = fn
 }
 func (w *window) OnMouseMove(fn func(float64, float64))                    { w.onMouseMove = fn }
-func (w *window) OnScroll(fn func(float64, float64))                       { w.onScroll = fn }
+func (w *window) OnScroll(fn func(float64, float64, bool))                 { w.onScroll = fn }
+func (w *window) OnPinch(fn func(float64))                                 { w.onPinch = fn }
 func (w *window) OnDragBegin(fn func(float64, float64))                    { w.onDragBegin = fn }
 func (w *window) OnDragMove(fn func(float64, float64))                     { w.onDragMove = fn }
 func (w *window) OnDragEnd(fn func(float64, float64))                      { w.onDragEnd = fn }

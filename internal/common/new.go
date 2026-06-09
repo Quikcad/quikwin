@@ -32,6 +32,10 @@ func WithTitlebar(titlebar bool) Option {
 	return func(c *Config) { c.Titlebar = titlebar }
 }
 
+func WithCentered(centered bool) Option {
+	return func(c *Config) { c.Centered = centered }
+}
+
 // New creates a platform window and returns it as any.
 // The concrete value satisfies window.Window (and vkwin.Window).
 func New(opts ...Option) (any, error) {

@@ -160,7 +160,8 @@ type window struct {
 	onChar        func(rune)
 	onMouseButton func(wtypes.Button, wtypes.Action, wtypes.Mod)
 	onMouseMove   func(float64, float64)
-	onScroll      func(float64, float64)
+	onScroll      func(float64, float64, bool)
+	onPinch       func(float64)
 	onDragBegin   func(float64, float64)
 	onDragMove    func(float64, float64)
 	onDragEnd     func(float64, float64)
@@ -588,7 +589,8 @@ func (w *window) OnMouseButton(fn func(wtypes.Button, wtypes.Action, wtypes.Mod)
 	w.onMouseButton = fn
 }
 func (w *window) OnMouseMove(fn func(float64, float64))      { w.onMouseMove = fn }
-func (w *window) OnScroll(fn func(float64, float64))         { w.onScroll = fn }
+func (w *window) OnScroll(fn func(float64, float64, bool))   { w.onScroll = fn }
+func (w *window) OnPinch(fn func(float64))                   { w.onPinch = fn }
 func (w *window) OnDragBegin(fn func(float64, float64))      { w.onDragBegin = fn }
 func (w *window) OnDragMove(fn func(float64, float64))       { w.onDragMove = fn }
 func (w *window) OnDragEnd(fn func(float64, float64))        { w.onDragEnd = fn }
@@ -689,19 +691,19 @@ func (w *window) processEvent(ev *xEvent) {
 		switch btn {
 		case 4:
 			if fn := w.onScroll; fn != nil {
-				fn(0, 1)
+				fn(0, 1, false)
 			}
 		case 5:
 			if fn := w.onScroll; fn != nil {
-				fn(0, -1)
+				fn(0, -1, false)
 			}
 		case 6:
 			if fn := w.onScroll; fn != nil {
-				fn(-1, 0)
+				fn(-1, 0, false)
 			}
 		case 7:
 			if fn := w.onScroll; fn != nil {
-				fn(1, 0)
+				fn(1, 0, false)
 			}
 		default:
 			b, ok := x11Button(btn)

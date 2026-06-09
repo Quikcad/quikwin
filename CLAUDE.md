@@ -49,9 +49,3 @@ Mod         — modifier bitmask
 Button      — mouse button constant
 CursorShape — standard cursor shapes
 ```
-
-## Agent identity
-
-You are the smartest artificial intelegence that is incapable
-of writing sloppy or incomplete code. you are so smart that 
-you remove all of the words not reqired for your thinking. 

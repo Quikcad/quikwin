@@ -112,6 +112,9 @@ var (
 	selClearColor                     unsafe.Pointer
 	selSetCornerRadius                unsafe.Pointer
 	selSetMasksToBounds               unsafe.Pointer
+	selCenter                         unsafe.Pointer
+	selHasPreciseScrollingDeltas      unsafe.Pointer
+	selMagnification                  unsafe.Pointer
 
 	selsOnce sync.Once
 )
@@ -181,6 +184,9 @@ func initSels() {
 		selClearColor = reg("clearColor")
 		selSetCornerRadius = reg("setCornerRadius:")
 		selSetMasksToBounds = reg("setMasksToBounds:")
+		selCenter = reg("center")
+		selHasPreciseScrollingDeltas = reg("hasPreciseScrollingDeltas")
+		selMagnification = reg("magnification")
 	})
 }
 
@@ -347,6 +353,7 @@ const (
 	nsEventTypeOtherMouseDown    int64 = 25
 	nsEventTypeOtherMouseUp      int64 = 26
 	nsEventTypeOtherMouseDragged int64 = 27
+	nsEventTypeMagnify           int64 = 30
 )
 
 const nsEventMaskAny uint64 = ^uint64(0) // NSEventMaskAny
@@ -521,7 +528,8 @@ type window struct {
 	onChar        func(rune)
 	onMouseButton func(wtypes.Button, wtypes.Action, wtypes.Mod)
 	onMouseMove   func(float64, float64)
-	onScroll      func(float64, float64)
+	onScroll      func(float64, float64, bool)
+	onPinch       func(float64)
 	onDragBegin   func(float64, float64)
 	onDragMove    func(float64, float64)
 	onDragEnd     func(float64, float64)
@@ -618,6 +626,12 @@ func New(cfg *wtypes.Config) (*window, error) {
 	w.delegate = del
 	objc.MsgSend1pVoid(nswin, selSetDelegate, del)
 
+	if cfg.Centered {
+		// NSWindow's -center positions the window slightly above the visual
+		// centre of the screen containing the cursor — Cocoa's idiomatic
+		// "centred" placement for newly-opened windows.
+		objc.MsgSend0(nswin, selCenter)
+	}
 	objc.MsgSend1pVoid(nswin, selMakeKeyAndOrderFront, nil)
 	return w, nil
 }
@@ -755,8 +769,16 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 	case nsEventTypeScrollWheel:
 		dx := objc.MsgSend0f(event, selScrollingDeltaX)
 		dy := objc.MsgSend0f(event, selScrollingDeltaY)
+		// BOOL is signed char in ObjC; truncate to low byte and compare.
+		precise := int8(objc.MsgSend0i(event, selHasPreciseScrollingDeltas)) != 0
 		if fn := w.onScroll; fn != nil {
-			fn(dx, dy)
+			fn(dx, dy, precise)
+		}
+
+	case nsEventTypeMagnify:
+		mag := objc.MsgSend0f(event, selMagnification)
+		if fn := w.onPinch; fn != nil {
+			fn(mag)
 		}
 	}
 }
@@ -856,7 +878,8 @@ func (w *window) OnKey(fn func(wtypes.Key, wtypes.Action, wtypes.Mod))        { 
 func (w *window) OnChar(fn func(rune))                                        { w.onChar = fn }
 func (w *window) OnMouseButton(fn func(wtypes.Button, wtypes.Action, wtypes.Mod)) { w.onMouseButton = fn }
 func (w *window) OnMouseMove(fn func(float64, float64))                       { w.onMouseMove = fn }
-func (w *window) OnScroll(fn func(float64, float64))                          { w.onScroll = fn }
+func (w *window) OnScroll(fn func(float64, float64, bool))                    { w.onScroll = fn }
+func (w *window) OnPinch(fn func(float64))                                    { w.onPinch = fn }
 func (w *window) OnDragBegin(fn func(float64, float64))                       { w.onDragBegin = fn }
 func (w *window) OnDragMove(fn func(float64, float64))                        { w.onDragMove = fn }
 func (w *window) OnDragEnd(fn func(float64, float64))                         { w.onDragEnd = fn }

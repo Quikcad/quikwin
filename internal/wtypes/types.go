@@ -132,6 +132,10 @@ type Config struct {
 	Resizable           bool
 	Border              bool
 	Titlebar            bool
+	// Centered asks the backend to position the window on the centre of the
+	// primary display at creation. Backends that can't query a display (e.g.
+	// Wayland in client-side mode) silently ignore the hint.
+	Centered bool
 }
 
 type CursorShape uint8
