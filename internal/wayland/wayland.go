@@ -591,17 +591,18 @@ func (w *window) ShouldClose() bool {
 }
 
 func (w *window) PollEvents() {
+	d := w.conn.Pointer()
 	wl.DispatchPending(w.conn)
-	for displayPrepareRead(w.conn.Pointer()) != 0 {
+	for displayPrepareRead(d) != 0 {
 		wl.DispatchPending(w.conn)
 	}
 	// Issue deferred window-state requests now, outside any dispatch callback.
 	w.applyPending()
 	wl.Flush(w.conn)
-	if fdReadable(displayGetFd(w.conn.Pointer())) {
-		displayReadEvents(w.conn.Pointer())
+	if fdReadable(displayGetFd(d)) {
+		displayReadEvents(d)
 	} else {
-		displayCancelRead(w.conn.Pointer())
+		displayCancelRead(d)
 	}
 	wl.DispatchPending(w.conn)
 	if w.applyPending() {
@@ -922,21 +923,27 @@ func (w *window) currentMods() wtypes.Mod {
 	return m
 }
 
+// readFD reads exactly size bytes from the keymap fd. It reads from absolute
+// offset 0 with pread: the fd arrives via SCM_RIGHTS and shares the
+// compositor's open file description, whose offset is already at end-of-file,
+// so a plain read would return EOF immediately and busy-loop here forever.
 func readFD(fd, size int) []byte {
 	if size <= 0 {
 		return nil
 	}
 	b := make([]byte, size)
-	n := 0
-	for n < size {
-		nn, err := sysRead(fd, b[n:])
-		n += nn
-		if err != nil {
+	off := 0
+	for off < size {
+		nn, err := sysPread(fd, b[off:], int64(off))
+		if nn > 0 {
+			off += nn
+		}
+		if err != nil || nn == 0 {
 			break
 		}
 	}
 	sysClose(fd)
-	if n < size {
+	if off < size {
 		return nil
 	}
 	return b

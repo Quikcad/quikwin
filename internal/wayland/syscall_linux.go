@@ -7,8 +7,8 @@ import (
 	"unsafe"
 )
 
-func sysRead(fd int, b []byte) (int, error) {
-	return syscall.Read(fd, b)
+func sysPread(fd int, b []byte, off int64) (int, error) {
+	return syscall.Pread(fd, b, off)
 }
 
 func sysClose(fd int) {
