@@ -5,6 +5,7 @@ package wayland
 import (
 	"encoding/binary"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 	"unsafe"
@@ -61,6 +62,7 @@ type window struct {
 
 	width, height       uint32
 	minWidth, minHeight uint32
+	resizePending       bool // a configure changed the size this poll cycle (guarded by mu)
 	appID               string
 
 	ptrX, ptrY   float64
@@ -71,6 +73,7 @@ type window struct {
 	decorated bool
 	dragging  bool
 	maximized bool
+	tiled     bool
 
 	pendingMinimize       bool
 	pendingToggleMaximize bool
@@ -274,25 +277,26 @@ func (w *window) HandleSurfaceConfigure(e xdg.SurfaceConfigureEvent) {
 
 func (w *window) HandleToplevelConfigure(e xdg.ToplevelConfigureEvent) {
 	maximized := statesContain(e.States, xdg.ToplevelStateMaximized)
+	tiled := statesContainAny(e.States,
+		xdg.ToplevelStateTiledLeft,
+		xdg.ToplevelStateTiledRight,
+		xdg.ToplevelStateTiledTop,
+		xdg.ToplevelStateTiledBottom,
+	)
 	w.mu.Lock()
 	w.maximized = maximized
+	w.tiled = tiled
 	w.mu.Unlock()
 	if e.Width <= 0 || e.Height <= 0 {
 		return
 	}
 	nw, nh := uint32(e.Width), uint32(e.Height)
 	w.mu.Lock()
-	changed := nw != w.width || nh != w.height
-	w.width, w.height = nw, nh
-	w.mu.Unlock()
-	if changed {
-		if fn := w.onResize; fn != nil {
-			fn(nw, nh)
-		}
-		if fn := w.onLiveResize; fn != nil {
-			fn()
-		}
+	if nw != w.width || nh != w.height {
+		w.width, w.height = nw, nh
+		w.resizePending = true
 	}
+	w.mu.Unlock()
 }
 
 func (w *window) HandleToplevelClose(e xdg.ToplevelCloseEvent) {
@@ -579,6 +583,12 @@ func (w *window) IsMaximized() bool {
 	return w.maximized
 }
 
+func (w *window) IsTiled() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.tiled
+}
+
 // ClientDecorated reports whether the window draws its own decorations, which
 // is the case whenever border or titlebar was disabled at creation.
 func (w *window) ClientDecorated() bool { return !w.decorated }
@@ -608,6 +618,27 @@ func (w *window) PollEvents() {
 	wl.DispatchPending(w.conn)
 	if w.applyPending() {
 		wl.Flush(w.conn)
+	}
+	w.flushResize()
+}
+
+// flushResize fires a single onResize for the final size seen this poll cycle.
+// A compositor-driven resize delivers a burst of xdg_toplevel configure events;
+// collapsing them to one callback avoids recreating the swapchain (and
+// re-rendering) once per event. onLiveResize is intentionally not driven here —
+// unlike macOS, the Wayland event loop does not block during a resize, so
+// App.Tick renders the new size itself right after PollEvents returns.
+func (w *window) flushResize() {
+	w.mu.Lock()
+	pending := w.resizePending
+	w.resizePending = false
+	nw, nh := w.width, w.height
+	w.mu.Unlock()
+	if !pending {
+		return
+	}
+	if fn := w.onResize; fn != nil {
+		fn(nw, nh)
 	}
 }
 
@@ -841,6 +872,19 @@ func (w *window) NewSurface(instance vk.Instance) (*vk.SurfaceKHR, error) {
 func statesContain(states []byte, want xdg.ToplevelState) bool {
 	for i := 0; i+4 <= len(states); i += 4 {
 		if xdg.ToplevelState(binary.LittleEndian.Uint32(states[i:])) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// statesContainAny reports whether the packed array carries any of the given
+// xdg_toplevel states. Used to collapse the four tiled_* edges into a single
+// "tiled" predicate (KWin quick-tile sets a left/right edge plus top+bottom).
+func statesContainAny(states []byte, want ...xdg.ToplevelState) bool {
+	for i := 0; i+4 <= len(states); i += 4 {
+		got := xdg.ToplevelState(binary.LittleEndian.Uint32(states[i:]))
+		if slices.Contains(want, got) {
 			return true
 		}
 	}

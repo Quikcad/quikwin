@@ -150,6 +150,7 @@ type window struct {
 
 	// Resize state
 	netWmMoveResize uint64
+	resizePending   bool // a ConfigureNotify changed the size this poll cycle (guarded by mu)
 
 	// Callbacks
 	onResize      func(uint32, uint32)
@@ -388,7 +389,28 @@ func (w *window) PollEvents() {
 		xNextEvent(w.dpy, &ev)
 		w.processEvent(&ev)
 	}
+	w.flushResize()
 	xFlush(w.dpy)
+}
+
+// flushResize fires a single onResize for the final size seen this poll cycle.
+// A WM-driven drag delivers a burst of ConfigureNotify events; collapsing them
+// to one callback avoids recreating the swapchain (and re-rendering) once per
+// event. onLiveResize is intentionally not driven here — unlike macOS, the X11
+// event loop does not block during a resize, so App.Tick renders the new size
+// itself right after PollEvents returns.
+func (w *window) flushResize() {
+	w.mu.Lock()
+	pending := w.resizePending
+	w.resizePending = false
+	nw, nh := w.width, w.height
+	w.mu.Unlock()
+	if !pending {
+		return
+	}
+	if fn := w.onResize; fn != nil {
+		fn(nw, nh)
+	}
 }
 
 func (w *window) SetTitle(title string) {
@@ -794,18 +816,12 @@ func (w *window) processEvent(ev *xEvent) {
 		nw := uint32(ev.configWidth())
 		nh := uint32(ev.configHeight())
 		w.mu.Lock()
-		changed := nw != w.width || nh != w.height
-		w.width = nw
-		w.height = nh
-		w.mu.Unlock()
-		if changed {
-			if fn := w.onResize; fn != nil {
-				fn(nw, nh)
-			}
-			if fn := w.onLiveResize; fn != nil {
-				fn()
-			}
+		if nw != w.width || nh != w.height {
+			w.width = nw
+			w.height = nh
+			w.resizePending = true
 		}
+		w.mu.Unlock()
 
 	case evClientMessage:
 		msgType := ev.clientMsgType()

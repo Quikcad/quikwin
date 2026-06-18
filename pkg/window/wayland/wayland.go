@@ -20,6 +20,11 @@ type WaylandWindow interface {
 	// compositor configure.
 	IsMaximized() bool
 
+	// IsTiled reports whether the latest compositor configure carried any
+	// tiled_* edge (e.g. a KWin half-screen quick-tile). Distinct from
+	// maximized and fullscreen.
+	IsTiled() bool
+
 	// ClientDecorated reports whether the client draws its own decorations
 	// (server-side decorations are off).
 	ClientDecorated() bool
