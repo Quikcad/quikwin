@@ -55,6 +55,11 @@ type window struct {
 	xkbKeymap unsafe.Pointer
 	xkbState  unsafe.Pointer
 
+	// modState tracks held modifier keys directly from key press/release, so
+	// modifiers are reported on key events even when the xkb modifier mask is
+	// unavailable. OR'd with currentMods so either source suffices.
+	modState wtypes.Mod
+
 	globals map[string]globalEntry
 
 	pendingSerial uint32
@@ -350,9 +355,28 @@ func (w *window) HandleKeyboardEnter(e wayland.KeyboardEnterEvent) {
 
 func (w *window) HandleKeyboardLeave(e wayland.KeyboardLeaveEvent) {
 	w.stopRepeat()
+	w.mu.Lock()
+	w.modState = 0
+	w.mu.Unlock()
 	if fn := w.onFocus; fn != nil {
 		fn(false)
 	}
+}
+
+// modBit maps a modifier key to its Mod bit, reporting ok=false for non-modifier
+// keys. Used to track held modifiers directly from key events.
+func modBit(k wtypes.Key) (wtypes.Mod, bool) {
+	switch k {
+	case wtypes.KeyLeftShift, wtypes.KeyRightShift:
+		return wtypes.ModShift, true
+	case wtypes.KeyLeftControl, wtypes.KeyRightControl:
+		return wtypes.ModControl, true
+	case wtypes.KeyLeftAlt, wtypes.KeyRightAlt:
+		return wtypes.ModAlt, true
+	case wtypes.KeyLeftSuper, wtypes.KeyRightSuper:
+		return wtypes.ModSuper, true
+	}
+	return 0, false
 }
 
 func (w *window) HandleKeyboardKey(e wayland.KeyboardKeyEvent) {
@@ -370,7 +394,19 @@ func (w *window) HandleKeyboardKey(e wayland.KeyboardKeyEvent) {
 	if e.State == wayland.KeyboardKeyStateReleased {
 		action = wtypes.Release
 	}
-	mods := w.currentMods()
+	if bit, ok := modBit(k); ok {
+		w.mu.Lock()
+		if action == wtypes.Release {
+			w.modState &^= bit
+		} else {
+			w.modState |= bit
+		}
+		w.mu.Unlock()
+	}
+	w.mu.Lock()
+	tracked := w.modState
+	w.mu.Unlock()
+	mods := w.currentMods() | tracked
 	if fn := w.onKey; fn != nil {
 		fn(k, action, mods)
 	}
