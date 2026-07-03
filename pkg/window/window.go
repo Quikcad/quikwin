@@ -23,6 +23,13 @@ type Window interface {
 	// Window dragging (for virtual title bars)
 	BeginDrag()
 
+	// Clipboard
+	// ClipboardText returns the system clipboard's text, or "" when it is empty
+	// or holds no text.
+	ClipboardText() string
+	// SetClipboardText publishes text to the system clipboard.
+	SetClipboardText(text string)
+
 	// Event registration
 	OnResize(fn func(width, height uint32))
 	// Only way to render intermediate frames on platforms that block during resize (e.g. macOS).

@@ -174,6 +174,8 @@ type window struct {
 	cursorShape  wtypes.CursorShape
 	blankCursor  uint64
 
+	clipText string // in-process clipboard fallback (see clipboard.go)
+
 	shouldClose bool
 	destroyed   bool
 }

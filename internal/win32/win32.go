@@ -169,6 +169,8 @@ type window struct {
 	cursorShape   wtypes.CursorShape
 	mouseInWindow bool
 
+	clipText string // in-process clipboard fallback (see clipboard.go)
+
 	shouldClose bool
 	destroyed   bool
 }

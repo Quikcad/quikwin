@@ -539,6 +539,8 @@ type window struct {
 
 	cursorHidden  bool
 	mouseInWindow bool
+
+	clipText string // in-process clipboard fallback (see clipboard.go)
 }
 
 func New(cfg *wtypes.Config) (*window, error) {

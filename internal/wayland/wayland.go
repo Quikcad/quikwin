@@ -50,6 +50,22 @@ type window struct {
 	cursorMgr     *cursorshapev1.ManagerV1
 	cursorDev     *cursorshapev1.DeviceV1
 
+	// Clipboard (wl_data_device). clipText/ownsClip describe the selection we
+	// published; selOffer/selMimes the selection currently offered by another
+	// client; pendingOffer/pendingMimes accumulate a data_offer's mime types
+	// until the matching selection event names it. inputSerial is the latest
+	// input event serial, required by set_selection.
+	dataDevMgr   *wayland.DataDeviceManager
+	dataDevice   *wayland.DataDevice
+	inputSerial  uint32
+	clipText     string
+	ownsClip     bool
+	clipSource   *wayland.DataSource
+	selOffer     *wayland.DataOffer
+	selMimes     []string
+	pendingOffer *wayland.DataOffer
+	pendingMimes []string
+
 	// libxkbcommon state (opaque C pointers).
 	xkbCtx    unsafe.Pointer
 	xkbKeymap unsafe.Pointer
@@ -227,6 +243,13 @@ func (w *window) bindGlobals() error {
 	if e, ok := w.globals[cursorshapev1.ManagerV1Name]; ok {
 		w.cursorMgr = cursorshapev1.BindManagerV1(reg, e.name, e.version)
 	}
+	if e, ok := w.globals[wayland.DataDeviceManagerName]; ok {
+		w.dataDevMgr = wayland.BindDataDeviceManager(reg, e.name, e.version)
+	}
+	if w.dataDevMgr != nil && w.seat != nil {
+		w.dataDevice = w.dataDevMgr.GetDataDevice(w.seat)
+		w.dataDevice.SetHandler(w)
+	}
 	return nil
 }
 
@@ -348,6 +371,9 @@ func (w *window) HandleKeyboardKeymap(e wayland.KeyboardKeymapEvent) {
 }
 
 func (w *window) HandleKeyboardEnter(e wayland.KeyboardEnterEvent) {
+	w.mu.Lock()
+	w.inputSerial = e.Serial
+	w.mu.Unlock()
 	if fn := w.onFocus; fn != nil {
 		fn(true)
 	}
@@ -381,6 +407,10 @@ func modBit(k wtypes.Key) (wtypes.Mod, bool) {
 
 func (w *window) HandleKeyboardKey(e wayland.KeyboardKeyEvent) {
 	w.stopRepeat()
+
+	w.mu.Lock()
+	w.inputSerial = e.Serial
+	w.mu.Unlock()
 
 	keycode := e.Key + 8
 	w.mu.Lock()
@@ -548,6 +578,7 @@ func (w *window) applyEdgeCursor(x, y float64, serial uint32) {
 func (w *window) HandlePointerButton(e wayland.PointerButtonEvent) {
 	w.mu.Lock()
 	w.ptrSerial = e.Serial
+	w.inputSerial = e.Serial
 	w.mu.Unlock()
 	b, ok := evdevButton(e.Button)
 	if !ok {
@@ -795,6 +826,15 @@ func (w *window) Destroy() {
 		if p != nil {
 			p.Destroy()
 		}
+	}
+	if w.clipSource != nil {
+		destroy(w.clipSource.Proxy())
+	}
+	if w.dataDevice != nil {
+		destroy(w.dataDevice.Proxy())
+	}
+	if w.dataDevMgr != nil {
+		destroy(w.dataDevMgr.Proxy())
 	}
 	if w.cursorDev != nil {
 		destroy(w.cursorDev.Proxy())

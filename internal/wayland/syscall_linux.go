@@ -26,3 +26,24 @@ func fdReadable(fd int32) bool {
 	r, _, _ := syscall.Syscall(syscall.SYS_POLL, uintptr(unsafe.Pointer(&pfd)), 1, 0)
 	return r > 0
 }
+
+func sysWrite(fd int, b []byte) (int, error) { return syscall.Write(fd, b) }
+
+func sysRead(fd int, b []byte) (int, error) { return syscall.Read(fd, b) }
+
+// sysPipe creates a close-on-exec pipe, returning its read and write fds.
+func sysPipe() (r, w int, err error) {
+	var fds [2]int
+	if err := syscall.Pipe2(fds[:], syscall.O_CLOEXEC); err != nil {
+		return 0, 0, err
+	}
+	return fds[0], fds[1], nil
+}
+
+// pollWait blocks until fd is readable or timeoutMs elapses, reporting whether
+// it became readable.
+func pollWait(fd int32, timeoutMs int) bool {
+	pfd := pollfd{fd: fd, events: 0x0001} // POLLIN
+	r, _, _ := syscall.Syscall(syscall.SYS_POLL, uintptr(unsafe.Pointer(&pfd)), 1, uintptr(timeoutMs))
+	return r > 0
+}
