@@ -710,9 +710,16 @@ func (w *window) dispatch(timeout time.Duration) {
 		return
 	}
 	d := w.conn.Pointer()
-	wl.DispatchPending(w.conn)
+	// Anything already queued is work to hand back now, so it cancels the
+	// wait: blocking after dispatching it would hold the caller's frame for
+	// the whole timeout.
+	if displayDispatchPending(d) > 0 {
+		timeout = 0
+	}
 	for displayPrepareRead(d) != 0 {
-		wl.DispatchPending(w.conn)
+		if displayDispatchPending(d) > 0 {
+			timeout = 0
+		}
 	}
 	// Issue deferred window-state requests now, outside any dispatch callback.
 	w.applyPending()
@@ -726,7 +733,7 @@ func (w *window) dispatch(timeout time.Duration) {
 	} else {
 		displayCancelRead(d)
 	}
-	wl.DispatchPending(w.conn)
+	displayDispatchPending(d)
 	if w.applyPending() {
 		wl.Flush(w.conn)
 	}

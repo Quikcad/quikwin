@@ -37,10 +37,11 @@ var (
 	_xkbKeymapModGetIndex     unsafe.Pointer
 	_xkbStateModIndexIsActive unsafe.Pointer
 
-	_wlDisplayGetFd       unsafe.Pointer
-	_wlDisplayPrepareRead unsafe.Pointer
-	_wlDisplayReadEvents  unsafe.Pointer
-	_wlDisplayCancelRead  unsafe.Pointer
+	_wlDisplayGetFd           unsafe.Pointer
+	_wlDisplayPrepareRead     unsafe.Pointer
+	_wlDisplayDispatchPending unsafe.Pointer
+	_wlDisplayReadEvents      unsafe.Pointer
+	_wlDisplayCancelRead      unsafe.Pointer
 
 	cifXkbContextNew            types.CallInterface
 	cifXkbContextUnref          types.CallInterface
@@ -54,10 +55,11 @@ var (
 	cifXkbKeymapModGetIndex     types.CallInterface
 	cifXkbStateModIndexIsActive types.CallInterface
 
-	cifWlDisplayGetFd       types.CallInterface
-	cifWlDisplayPrepareRead types.CallInterface
-	cifWlDisplayReadEvents  types.CallInterface
-	cifWlDisplayCancelRead  types.CallInterface
+	cifWlDisplayGetFd           types.CallInterface
+	cifWlDisplayPrepareRead     types.CallInterface
+	cifWlDisplayDispatchPending types.CallInterface
+	cifWlDisplayReadEvents      types.CallInterface
+	cifWlDisplayCancelRead      types.CallInterface
 )
 
 var (
@@ -106,6 +108,7 @@ func loadSymbols() error {
 		{&_xkbStateModIndexIsActive, xkbLib, "xkb_state_mod_index_is_active"},
 		{&_wlDisplayGetFd, wlLib, "wl_display_get_fd"},
 		{&_wlDisplayPrepareRead, wlLib, "wl_display_prepare_read"},
+		{&_wlDisplayDispatchPending, wlLib, "wl_display_dispatch_pending"},
 		{&_wlDisplayReadEvents, wlLib, "wl_display_read_events"},
 		{&_wlDisplayCancelRead, wlLib, "wl_display_cancel_read"},
 	} {
@@ -138,6 +141,7 @@ func prepareCIFs() error {
 		{&cifXkbStateModIndexIsActive, _i32, []*types.TypeDescriptor{_ptr, _u32, _u32}},
 		{&cifWlDisplayGetFd, _i32, []*types.TypeDescriptor{_ptr}},
 		{&cifWlDisplayPrepareRead, _i32, []*types.TypeDescriptor{_ptr}},
+		{&cifWlDisplayDispatchPending, _i32, []*types.TypeDescriptor{_ptr}},
 		{&cifWlDisplayReadEvents, _i32, []*types.TypeDescriptor{_ptr}},
 		{&cifWlDisplayCancelRead, _void, []*types.TypeDescriptor{_ptr}},
 	} {
@@ -252,6 +256,16 @@ func displayGetFd(display unsafe.Pointer) int32 {
 func displayPrepareRead(display unsafe.Pointer) int32 {
 	var r int32
 	ffi.CallFunction(&cifWlDisplayPrepareRead, _wlDisplayPrepareRead, unsafe.Pointer(&r),
+		[]unsafe.Pointer{unsafe.Pointer(&display)})
+	return r
+}
+
+// displayDispatchPending returns the number of events dispatched, which
+// wayland-go's DispatchPending drops. The event loop needs it to tell a pass
+// that had work from one that did not.
+func displayDispatchPending(display unsafe.Pointer) int32 {
+	var r int32
+	ffi.CallFunction(&cifWlDisplayDispatchPending, _wlDisplayDispatchPending, unsafe.Pointer(&r),
 		[]unsafe.Pointer{unsafe.Pointer(&display)})
 	return r
 }
