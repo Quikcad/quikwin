@@ -18,22 +18,24 @@ import (
 // XEvent on 64-bit Linux is a 192-byte union (long pad[24]).
 type xEvent [192]byte
 
-func (e *xEvent) typ() int32       { return *(*int32)(unsafe.Pointer(&e[0])) }
-func (e *xEvent) window() uint64   { return *(*uint64)(unsafe.Pointer(&e[32])) }
-func (e *xEvent) keyState() uint32 { return *(*uint32)(unsafe.Pointer(&e[80])) }
-func (e *xEvent) keyCode() uint32  { return *(*uint32)(unsafe.Pointer(&e[84])) }
-func (e *xEvent) btnButton() uint32 { return *(*uint32)(unsafe.Pointer(&e[84])) }
-func (e *xEvent) btnState() uint32  { return *(*uint32)(unsafe.Pointer(&e[80])) }
-func (e *xEvent) btnX() int32       { return *(*int32)(unsafe.Pointer(&e[64])) }
-func (e *xEvent) btnY() int32       { return *(*int32)(unsafe.Pointer(&e[68])) }
-func (e *xEvent) motionX() int32    { return *(*int32)(unsafe.Pointer(&e[64])) }
-func (e *xEvent) motionY() int32    { return *(*int32)(unsafe.Pointer(&e[68])) }
-func (e *xEvent) motionXRoot() int32 { return *(*int32)(unsafe.Pointer(&e[72])) }
-func (e *xEvent) motionYRoot() int32 { return *(*int32)(unsafe.Pointer(&e[76])) }
+func (e *xEvent) typ() int32          { return *(*int32)(unsafe.Pointer(&e[0])) }
+func (e *xEvent) window() uint64      { return *(*uint64)(unsafe.Pointer(&e[32])) }
+func (e *xEvent) keyState() uint32    { return *(*uint32)(unsafe.Pointer(&e[80])) }
+func (e *xEvent) keyCode() uint32     { return *(*uint32)(unsafe.Pointer(&e[84])) }
+func (e *xEvent) btnButton() uint32   { return *(*uint32)(unsafe.Pointer(&e[84])) }
+func (e *xEvent) btnState() uint32    { return *(*uint32)(unsafe.Pointer(&e[80])) }
+func (e *xEvent) btnX() int32         { return *(*int32)(unsafe.Pointer(&e[64])) }
+func (e *xEvent) btnY() int32         { return *(*int32)(unsafe.Pointer(&e[68])) }
+func (e *xEvent) motionX() int32      { return *(*int32)(unsafe.Pointer(&e[64])) }
+func (e *xEvent) motionY() int32      { return *(*int32)(unsafe.Pointer(&e[68])) }
+func (e *xEvent) motionXRoot() int32  { return *(*int32)(unsafe.Pointer(&e[72])) }
+func (e *xEvent) motionYRoot() int32  { return *(*int32)(unsafe.Pointer(&e[76])) }
 func (e *xEvent) motionState() uint32 { return *(*uint32)(unsafe.Pointer(&e[80])) }
+
 // XConfigureEvent: event=offset32, window=offset40, x=48, y=52, width=56, height=60
 func (e *xEvent) configWidth() int32  { return *(*int32)(unsafe.Pointer(&e[56])) }
 func (e *xEvent) configHeight() int32 { return *(*int32)(unsafe.Pointer(&e[60])) }
+
 // XClientMessageEvent: message_type=offset40, data.l[0]=offset56
 func (e *xEvent) clientMsgType() uint64 { return *(*uint64)(unsafe.Pointer(&e[40])) }
 func (e *xEvent) clientMsgL0() uint64   { return *(*uint64)(unsafe.Pointer(&e[56])) }
@@ -603,24 +605,24 @@ func edgeToMoveResizeDir(edge wtypes.ResizeEdge) int32 {
 
 // ─── Event registration ───────────────────────────────────────────────────────
 
-func (w *window) OnResize(fn func(uint32, uint32))           { w.onResize = fn }
-func (w *window) OnLiveResize(fn func())                     { w.onLiveResize = fn }
-func (w *window) OnClose(fn func())                          { w.onClose = fn }
-func (w *window) OnFocus(fn func(bool))                      { w.onFocus = fn }
+func (w *window) OnResize(fn func(uint32, uint32))                     { w.onResize = fn }
+func (w *window) OnLiveResize(fn func())                               { w.onLiveResize = fn }
+func (w *window) OnClose(fn func())                                    { w.onClose = fn }
+func (w *window) OnFocus(fn func(bool))                                { w.onFocus = fn }
 func (w *window) OnKey(fn func(wtypes.Key, wtypes.Action, wtypes.Mod)) { w.onKey = fn }
-func (w *window) OnChar(fn func(rune))                       { w.onChar = fn }
+func (w *window) OnChar(fn func(rune))                                 { w.onChar = fn }
 func (w *window) OnMouseButton(fn func(wtypes.Button, wtypes.Action, wtypes.Mod)) {
 	w.onMouseButton = fn
 }
-func (w *window) OnMouseMove(fn func(float64, float64))      { w.onMouseMove = fn }
-func (w *window) OnScroll(fn func(float64, float64, bool))   { w.onScroll = fn }
-func (w *window) OnPinch(fn func(float64))                   { w.onPinch = fn }
-func (w *window) OnDragBegin(fn func(float64, float64))      { w.onDragBegin = fn }
-func (w *window) OnDragMove(fn func(float64, float64))       { w.onDragMove = fn }
-func (w *window) OnDragEnd(fn func(float64, float64))        { w.onDragEnd = fn }
-func (w *window) OnDrop(fn func([]string))                   { w.onDrop = fn }
+func (w *window) OnMouseMove(fn func(float64, float64))                    { w.onMouseMove = fn }
+func (w *window) OnScroll(fn func(float64, float64, bool))                 { w.onScroll = fn }
+func (w *window) OnPinch(fn func(float64))                                 { w.onPinch = fn }
+func (w *window) OnDragBegin(fn func(float64, float64))                    { w.onDragBegin = fn }
+func (w *window) OnDragMove(fn func(float64, float64))                     { w.onDragMove = fn }
+func (w *window) OnDragEnd(fn func(float64, float64))                      { w.onDragEnd = fn }
+func (w *window) OnDrop(fn func([]string))                                 { w.onDrop = fn }
 func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
-func (w *window) OnCursorEnter(fn func(float64, float64))                 { w.onCursorEnter = fn }
+func (w *window) OnCursorEnter(fn func(float64, float64))                  { w.onCursorEnter = fn }
 
 // ─── X11Window interface ──────────────────────────────────────────────────────
 
@@ -854,13 +856,13 @@ func (w *window) processEvent(ev *xEvent) {
 
 func (w *window) sendXdndStatus() {
 	var ev xEvent
-	*(*int32)(unsafe.Pointer(&ev[0])) = evClientMessage     // type
-	*(*uint64)(unsafe.Pointer(&ev[32])) = w.xdndSource       // window
-	*(*uint64)(unsafe.Pointer(&ev[40])) = w.xdndStatus       // message_type
-	*(*int32)(unsafe.Pointer(&ev[48])) = 32                   // format
-	*(*uint64)(unsafe.Pointer(&ev[56])) = w.win               // data.l[0] = our window
-	*(*uint64)(unsafe.Pointer(&ev[64])) = 1                   // data.l[1] bit 0: accept
-	*(*uint64)(unsafe.Pointer(&ev[88])) = w.xdndActionCopy   // data.l[4] = action
+	*(*int32)(unsafe.Pointer(&ev[0])) = evClientMessage    // type
+	*(*uint64)(unsafe.Pointer(&ev[32])) = w.xdndSource     // window
+	*(*uint64)(unsafe.Pointer(&ev[40])) = w.xdndStatus     // message_type
+	*(*int32)(unsafe.Pointer(&ev[48])) = 32                // format
+	*(*uint64)(unsafe.Pointer(&ev[56])) = w.win            // data.l[0] = our window
+	*(*uint64)(unsafe.Pointer(&ev[64])) = 1                // data.l[1] bit 0: accept
+	*(*uint64)(unsafe.Pointer(&ev[88])) = w.xdndActionCopy // data.l[4] = action
 
 	src := w.xdndSource
 	propagate := int32(0)
@@ -1148,9 +1150,9 @@ func pI32(v int32) unsafe.Pointer { return unsafe.Pointer(&v) }
 
 // Package-level vars to avoid taking address of const expressions.
 var (
-	xaAtom_        = xaAtom
-	xaCardinal_    = xaCardinal
-	i32_32_        = int32(32)
+	xaAtom_          = xaAtom
+	xaCardinal_      = xaCardinal
+	i32_32_          = int32(32)
 	propModeReplace_ = propModeReplace
 )
 

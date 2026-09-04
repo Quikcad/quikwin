@@ -105,7 +105,7 @@ const (
 type Mod uint8
 
 const (
-	ModShift    Mod = 1 << iota
+	ModShift Mod = 1 << iota
 	ModControl
 	ModAlt
 	ModSuper
@@ -170,9 +170,9 @@ const (
 	EdgeBottom      ResizeEdge = 2
 	EdgeLeft        ResizeEdge = 4
 	EdgeTopLeft     ResizeEdge = EdgeTop | EdgeLeft    // 5
-	EdgeBottomLeft  ResizeEdge = EdgeBottom | EdgeLeft  // 6
+	EdgeBottomLeft  ResizeEdge = EdgeBottom | EdgeLeft // 6
 	EdgeRight       ResizeEdge = 8
-	EdgeTopRight    ResizeEdge = EdgeTop | EdgeRight   // 9
+	EdgeTopRight    ResizeEdge = EdgeTop | EdgeRight    // 9
 	EdgeBottomRight ResizeEdge = EdgeBottom | EdgeRight // 10
 )
 

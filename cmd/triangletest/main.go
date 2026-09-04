@@ -60,12 +60,12 @@ func main() {
 type triApp struct {
 	win window.Window
 
-	inst          *vk.Instance
-	surf          *vk.SurfaceKHR
-	physDev       *vk.PhysicalDevice
+	inst           *vk.Instance
+	surf           *vk.SurfaceKHR
+	physDev        *vk.PhysicalDevice
 	graphicsFamily uint32
-	device        *vk.Device
-	queue         *vk.Queue
+	device         *vk.Device
+	queue          *vk.Queue
 
 	swapchain    *vk.SwapchainKHR
 	swapFormat   vk.Format
@@ -81,9 +81,9 @@ type triApp struct {
 	cmdPool      *vk.CommandPool
 	cmdBufs      []*vk.CommandBuffer
 
-	imageAvail  [maxFrames]*vk.Semaphore
-	renderDone  [maxFrames]*vk.Semaphore
-	inFlight    [maxFrames]*vk.Fence
+	imageAvail   [maxFrames]*vk.Semaphore
+	renderDone   [maxFrames]*vk.Semaphore
+	inFlight     [maxFrames]*vk.Fence
 	currentFrame int
 }
 
@@ -505,7 +505,7 @@ func (a *triApp) createCommandBuffers() error {
 		}, vk.SubpassContentsInline)
 
 		cb.SetViewport(0, []vk.Viewport{{
-			X:        0, Y: 0,
+			X: 0, Y: 0,
 			Width:    float32(a.swapExtent.Width),
 			Height:   float32(a.swapExtent.Height),
 			MinDepth: 0, MaxDepth: 1,
