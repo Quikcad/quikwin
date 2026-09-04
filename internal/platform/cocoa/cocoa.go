@@ -50,71 +50,71 @@ func init() {
 // ---------------------------------------------------------------------------
 
 var (
-	selInit                           unsafe.Pointer
-	selAlloc                          unsafe.Pointer
-	selRelease                        unsafe.Pointer
-	selSharedApplication              unsafe.Pointer
-	selSetActivationPolicy            unsafe.Pointer
-	selActivateIgnoringOtherApps      unsafe.Pointer
-	selNextEventMatchingMask          unsafe.Pointer
-	selSendEvent                      unsafe.Pointer
-	selUpdateWindows                  unsafe.Pointer
-	selSetDelegate                    unsafe.Pointer
-	selDistantPast                    unsafe.Pointer
-	selStringWithUTF8String           unsafe.Pointer
-	selInitWithContentRect            unsafe.Pointer
-	selMakeKeyAndOrderFront           unsafe.Pointer
-	selSetTitle                       unsafe.Pointer
-	selSetReleasedWhenClosed          unsafe.Pointer
-	selSetMinSize                     unsafe.Pointer
-	selSetContentSize                 unsafe.Pointer
-	selSetStyleMask                   unsafe.Pointer
-	selClose                          unsafe.Pointer
-	selContentView                    unsafe.Pointer
-	selSetWantsLayer                  unsafe.Pointer
-	selLayer                          unsafe.Pointer
-	selBackingScaleFactor             unsafe.Pointer
-	selMainScreen                     unsafe.Pointer
-	selType                           unsafe.Pointer
-	selKeyCode                        unsafe.Pointer
-	selModifierFlags                  unsafe.Pointer
-	selIsARepeat                      unsafe.Pointer
-	selCharacters                     unsafe.Pointer
-	selUTF8String                     unsafe.Pointer
-	selButtonNumber                   unsafe.Pointer
-	selDeltaX                         unsafe.Pointer
-	selDeltaY                         unsafe.Pointer
-	selScrollingDeltaX                unsafe.Pointer
-	selScrollingDeltaY                unsafe.Pointer
-	selSetTitlebarAppearsTransparent  unsafe.Pointer
-	selSetTitleVisibility             unsafe.Pointer
-	selStandardWindowButton           unsafe.Pointer
-	selSetFrameOrigin                 unsafe.Pointer
-	selSetLayer                       unsafe.Pointer
-	selSetContentsScale               unsafe.Pointer
-	selHide                           unsafe.Pointer
-	selUnhide                         unsafe.Pointer
-	selPerformWindowDragWithEvent     unsafe.Pointer
-	selCurrentEvent                   unsafe.Pointer
-	selLocationInWindow               unsafe.Pointer
-	selSetAcceptsMouseMovedEvents     unsafe.Pointer
-	selFinishLaunching                unsafe.Pointer
-	selIsKeyWindow                    unsafe.Pointer
-	selFrame                          unsafe.Pointer
-	selMiniaturize                    unsafe.Pointer
-	selZoom                           unsafe.Pointer
-	selIsZoomed                       unsafe.Pointer
-	selToggleFullScreen               unsafe.Pointer
-	selStyleMask                      unsafe.Pointer
-	selSetCollectionBehavior          unsafe.Pointer
-	selSetOpaque                      unsafe.Pointer
-	selSetBackgroundColor             unsafe.Pointer
-	selClearColor                     unsafe.Pointer
-	selSetCornerRadius                unsafe.Pointer
-	selSetMasksToBounds               unsafe.Pointer
-	selCenter                         unsafe.Pointer
-	selHasPreciseScrollingDeltas      unsafe.Pointer
-	selMagnification                  unsafe.Pointer
+	selInit                          unsafe.Pointer
+	selAlloc                         unsafe.Pointer
+	selRelease                       unsafe.Pointer
+	selSharedApplication             unsafe.Pointer
+	selSetActivationPolicy           unsafe.Pointer
+	selActivateIgnoringOtherApps     unsafe.Pointer
+	selNextEventMatchingMask         unsafe.Pointer
+	selSendEvent                     unsafe.Pointer
+	selUpdateWindows                 unsafe.Pointer
+	selSetDelegate                   unsafe.Pointer
+	selDistantPast                   unsafe.Pointer
+	selStringWithUTF8String          unsafe.Pointer
+	selInitWithContentRect           unsafe.Pointer
+	selMakeKeyAndOrderFront          unsafe.Pointer
+	selSetTitle                      unsafe.Pointer
+	selSetReleasedWhenClosed         unsafe.Pointer
+	selSetMinSize                    unsafe.Pointer
+	selSetContentSize                unsafe.Pointer
+	selSetStyleMask                  unsafe.Pointer
+	selClose                         unsafe.Pointer
+	selContentView                   unsafe.Pointer
+	selSetWantsLayer                 unsafe.Pointer
+	selLayer                         unsafe.Pointer
+	selBackingScaleFactor            unsafe.Pointer
+	selMainScreen                    unsafe.Pointer
+	selType                          unsafe.Pointer
+	selKeyCode                       unsafe.Pointer
+	selModifierFlags                 unsafe.Pointer
+	selIsARepeat                     unsafe.Pointer
+	selCharacters                    unsafe.Pointer
+	selUTF8String                    unsafe.Pointer
+	selButtonNumber                  unsafe.Pointer
+	selDeltaX                        unsafe.Pointer
+	selDeltaY                        unsafe.Pointer
+	selScrollingDeltaX               unsafe.Pointer
+	selScrollingDeltaY               unsafe.Pointer
+	selSetTitlebarAppearsTransparent unsafe.Pointer
+	selSetTitleVisibility            unsafe.Pointer
+	selStandardWindowButton          unsafe.Pointer
+	selSetFrameOrigin                unsafe.Pointer
+	selSetLayer                      unsafe.Pointer
+	selSetContentsScale              unsafe.Pointer
+	selHide                          unsafe.Pointer
+	selUnhide                        unsafe.Pointer
+	selPerformWindowDragWithEvent    unsafe.Pointer
+	selCurrentEvent                  unsafe.Pointer
+	selLocationInWindow              unsafe.Pointer
+	selSetAcceptsMouseMovedEvents    unsafe.Pointer
+	selFinishLaunching               unsafe.Pointer
+	selIsKeyWindow                   unsafe.Pointer
+	selFrame                         unsafe.Pointer
+	selMiniaturize                   unsafe.Pointer
+	selZoom                          unsafe.Pointer
+	selIsZoomed                      unsafe.Pointer
+	selToggleFullScreen              unsafe.Pointer
+	selStyleMask                     unsafe.Pointer
+	selSetCollectionBehavior         unsafe.Pointer
+	selSetOpaque                     unsafe.Pointer
+	selSetBackgroundColor            unsafe.Pointer
+	selClearColor                    unsafe.Pointer
+	selSetCornerRadius               unsafe.Pointer
+	selSetMasksToBounds              unsafe.Pointer
+	selCenter                        unsafe.Pointer
+	selHasPreciseScrollingDeltas     unsafe.Pointer
+	selMagnification                 unsafe.Pointer
 
 	selsOnce sync.Once
 )
@@ -514,8 +514,8 @@ type window struct {
 	view       unsafe.Pointer
 	metalLayer unsafe.Pointer // CAMetalLayer backing the view; set in New
 
-	width, height uint32
-	scale         float32
+	width, height  uint32
+	scale          float32
 	mouseX, mouseY float64
 	closed         atomic.Bool
 	styleMask      uint64
@@ -872,22 +872,24 @@ func (w *window) Destroy() {
 	w.nswin = nil
 }
 
-func (w *window) OnResize(fn func(uint32, uint32))                            { w.onResize = fn }
-func (w *window) OnLiveResize(fn func())                                      { w.onLiveResize = fn }
-func (w *window) OnClose(fn func())                                           { w.onClose = fn }
-func (w *window) OnFocus(fn func(bool))                                       { w.onFocus = fn }
-func (w *window) OnKey(fn func(wtypes.Key, wtypes.Action, wtypes.Mod))        { w.onKey = fn }
-func (w *window) OnChar(fn func(rune))                                        { w.onChar = fn }
-func (w *window) OnMouseButton(fn func(wtypes.Button, wtypes.Action, wtypes.Mod)) { w.onMouseButton = fn }
-func (w *window) OnMouseMove(fn func(float64, float64))                       { w.onMouseMove = fn }
-func (w *window) OnScroll(fn func(float64, float64, bool))                    { w.onScroll = fn }
-func (w *window) OnPinch(fn func(float64))                                    { w.onPinch = fn }
-func (w *window) OnDragBegin(fn func(float64, float64))                       { w.onDragBegin = fn }
-func (w *window) OnDragMove(fn func(float64, float64))                        { w.onDragMove = fn }
-func (w *window) OnDragEnd(fn func(float64, float64))                         { w.onDragEnd = fn }
-func (w *window) OnDrop(fn func([]string))                                    { w.onDrop = fn }
-func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult)   { w.onHitTest = fn }
-func (w *window) OnCursorEnter(fn func(float64, float64))                   { w.onCursorEnter = fn }
+func (w *window) OnResize(fn func(uint32, uint32))                     { w.onResize = fn }
+func (w *window) OnLiveResize(fn func())                               { w.onLiveResize = fn }
+func (w *window) OnClose(fn func())                                    { w.onClose = fn }
+func (w *window) OnFocus(fn func(bool))                                { w.onFocus = fn }
+func (w *window) OnKey(fn func(wtypes.Key, wtypes.Action, wtypes.Mod)) { w.onKey = fn }
+func (w *window) OnChar(fn func(rune))                                 { w.onChar = fn }
+func (w *window) OnMouseButton(fn func(wtypes.Button, wtypes.Action, wtypes.Mod)) {
+	w.onMouseButton = fn
+}
+func (w *window) OnMouseMove(fn func(float64, float64))                    { w.onMouseMove = fn }
+func (w *window) OnScroll(fn func(float64, float64, bool))                 { w.onScroll = fn }
+func (w *window) OnPinch(fn func(float64))                                 { w.onPinch = fn }
+func (w *window) OnDragBegin(fn func(float64, float64))                    { w.onDragBegin = fn }
+func (w *window) OnDragMove(fn func(float64, float64))                     { w.onDragMove = fn }
+func (w *window) OnDragEnd(fn func(float64, float64))                      { w.onDragEnd = fn }
+func (w *window) OnDrop(fn func([]string))                                 { w.onDrop = fn }
+func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
+func (w *window) OnCursorEnter(fn func(float64, float64))                  { w.onCursorEnter = fn }
 
 // ---------------------------------------------------------------------------
 // CocoaWindow interface methods

@@ -58,31 +58,31 @@ const (
 	pmRemove = uint32(0x0001)
 
 	// WM_* message constants
-	wmDestroy      = uint32(0x0002)
-	wmSize         = uint32(0x0005)
-	wmSetFocus     = uint32(0x0007)
-	wmKillFocus    = uint32(0x0008)
-	wmClose        = uint32(0x0010)
-	wmKeyDown      = uint32(0x0100)
-	wmKeyUp        = uint32(0x0101)
-	wmChar         = uint32(0x0102)
-	wmSysKeyDown   = uint32(0x0104)
-	wmSysKeyUp     = uint32(0x0105)
-	wmMouseMove    = uint32(0x0200)
-	wmLButtonDown  = uint32(0x0201)
-	wmLButtonUp    = uint32(0x0202)
-	wmRButtonDown  = uint32(0x0204)
-	wmRButtonUp    = uint32(0x0205)
-	wmMButtonDown  = uint32(0x0207)
-	wmMButtonUp    = uint32(0x0208)
-	wmMouseWheel   = uint32(0x020A)
-	wmMouseHWheel  = uint32(0x020E)
-	wmXButtonDown  = uint32(0x020B)
-	wmXButtonUp    = uint32(0x020C)
-	wmDropFiles    = uint32(0x0233)
-	wmNcHitTest    = uint32(0x0084)
-	wmSizing       = uint32(0x0214)
-	wmMoving       = uint32(0x0216)
+	wmDestroy       = uint32(0x0002)
+	wmSize          = uint32(0x0005)
+	wmSetFocus      = uint32(0x0007)
+	wmKillFocus     = uint32(0x0008)
+	wmClose         = uint32(0x0010)
+	wmKeyDown       = uint32(0x0100)
+	wmKeyUp         = uint32(0x0101)
+	wmChar          = uint32(0x0102)
+	wmSysKeyDown    = uint32(0x0104)
+	wmSysKeyUp      = uint32(0x0105)
+	wmMouseMove     = uint32(0x0200)
+	wmLButtonDown   = uint32(0x0201)
+	wmLButtonUp     = uint32(0x0202)
+	wmRButtonDown   = uint32(0x0204)
+	wmRButtonUp     = uint32(0x0205)
+	wmMButtonDown   = uint32(0x0207)
+	wmMButtonUp     = uint32(0x0208)
+	wmMouseWheel    = uint32(0x020A)
+	wmMouseHWheel   = uint32(0x020E)
+	wmXButtonDown   = uint32(0x020B)
+	wmXButtonUp     = uint32(0x020C)
+	wmDropFiles     = uint32(0x0233)
+	wmNcHitTest     = uint32(0x0084)
+	wmSizing        = uint32(0x0214)
+	wmMoving        = uint32(0x0216)
 	wmEnterSizeMove = uint32(0x0231)
 	wmExitSizeMove  = uint32(0x0232)
 	wmSetCursor     = uint32(0x0020)
@@ -211,18 +211,18 @@ func New(cfg *wtypes.Config) (*window, error) {
 	var hwnd unsafe.Pointer
 	ffi.CallFunction(&cifCreateWindowExW, _CreateWindowExW, unsafe.Pointer(&hwnd),
 		[]unsafe.Pointer{
-			pU32(0),                        // exStyle
-			unsafe.Pointer(classW),         // className
-			unsafe.Pointer(titleW),         // title
-			pU32(style),                    // style
-			pI32(-0x80000000),              // x = CW_USEDEFAULT
-			pI32(-0x80000000),              // y
+			pU32(0),                // exStyle
+			unsafe.Pointer(classW), // className
+			unsafe.Pointer(titleW), // title
+			pU32(style),            // style
+			pI32(-0x80000000),      // x = CW_USEDEFAULT
+			pI32(-0x80000000),      // y
 			unsafe.Pointer(&w),
 			unsafe.Pointer(&h),
-			nil,                            // parent
-			nil,                            // menu
+			nil, // parent
+			nil, // menu
 			unsafe.Pointer(&hInst),
-			nil,                            // param
+			nil, // param
 		})
 	if hwnd == nil {
 		return nil, fmt.Errorf("quikwin/win32: CreateWindowExW failed")
@@ -436,13 +436,13 @@ func (w *window) handleMessage(msg uint32, wParam uint64, lParam int64) (int64, 
 		return 0, true
 
 	case wmMouseWheel:
-		delta := float64(int16((wParam >> 16) & 0xffff)) / 120.0
+		delta := float64(int16((wParam>>16)&0xffff)) / 120.0
 		if fn := w.onScroll; fn != nil {
 			fn(0, delta, false)
 		}
 		return 0, true
 	case wmMouseHWheel:
-		delta := float64(int16((wParam >> 16) & 0xffff)) / 120.0
+		delta := float64(int16((wParam>>16)&0xffff)) / 120.0
 		if fn := w.onScroll; fn != nil {
 			fn(delta, 0, false)
 		}
@@ -640,24 +640,24 @@ func (w *window) BeginDrag() {
 
 // ─── Event registration ───────────────────────────────────────────────────────
 
-func (w *window) OnResize(fn func(uint32, uint32))           { w.onResize = fn }
-func (w *window) OnLiveResize(fn func())                     { w.onLiveResize = fn }
-func (w *window) OnClose(fn func())                          { w.onClose = fn }
-func (w *window) OnFocus(fn func(bool))                      { w.onFocus = fn }
+func (w *window) OnResize(fn func(uint32, uint32))                     { w.onResize = fn }
+func (w *window) OnLiveResize(fn func())                               { w.onLiveResize = fn }
+func (w *window) OnClose(fn func())                                    { w.onClose = fn }
+func (w *window) OnFocus(fn func(bool))                                { w.onFocus = fn }
 func (w *window) OnKey(fn func(wtypes.Key, wtypes.Action, wtypes.Mod)) { w.onKey = fn }
-func (w *window) OnChar(fn func(rune))                       { w.onChar = fn }
+func (w *window) OnChar(fn func(rune))                                 { w.onChar = fn }
 func (w *window) OnMouseButton(fn func(wtypes.Button, wtypes.Action, wtypes.Mod)) {
 	w.onMouseButton = fn
 }
-func (w *window) OnMouseMove(fn func(float64, float64))      { w.onMouseMove = fn }
-func (w *window) OnScroll(fn func(float64, float64, bool))   { w.onScroll = fn }
-func (w *window) OnPinch(fn func(float64))                   { w.onPinch = fn }
-func (w *window) OnDragBegin(fn func(float64, float64))      { w.onDragBegin = fn }
-func (w *window) OnDragMove(fn func(float64, float64))       { w.onDragMove = fn }
-func (w *window) OnDragEnd(fn func(float64, float64))        { w.onDragEnd = fn }
-func (w *window) OnDrop(fn func([]string))                   { w.onDrop = fn }
+func (w *window) OnMouseMove(fn func(float64, float64))                    { w.onMouseMove = fn }
+func (w *window) OnScroll(fn func(float64, float64, bool))                 { w.onScroll = fn }
+func (w *window) OnPinch(fn func(float64))                                 { w.onPinch = fn }
+func (w *window) OnDragBegin(fn func(float64, float64))                    { w.onDragBegin = fn }
+func (w *window) OnDragMove(fn func(float64, float64))                     { w.onDragMove = fn }
+func (w *window) OnDragEnd(fn func(float64, float64))                      { w.onDragEnd = fn }
+func (w *window) OnDrop(fn func([]string))                                 { w.onDrop = fn }
 func (w *window) OnHitTest(fn func(float64, float64) wtypes.HitTestResult) { w.onHitTest = fn }
-func (w *window) OnCursorEnter(fn func(float64, float64))                 { w.onCursorEnter = fn }
+func (w *window) OnCursorEnter(fn func(float64, float64))                  { w.onCursorEnter = fn }
 
 // ─── Win32Window interface ────────────────────────────────────────────────────
 
