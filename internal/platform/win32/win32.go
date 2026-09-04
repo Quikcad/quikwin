@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 
@@ -57,7 +58,13 @@ const (
 	// PeekMessage remove flag
 	pmRemove = uint32(0x0001)
 
+	// MsgWaitForMultipleObjectsEx
+	infinite           = uint32(0xFFFFFFFF)
+	qsAllInput         = uint32(0x04FF)
+	mwmoInputAvailable = uint32(0x0004)
+
 	// WM_* message constants
+	wmNull          = uint32(0x0000)
 	wmDestroy       = uint32(0x0002)
 	wmSize          = uint32(0x0005)
 	wmSetFocus      = uint32(0x0007)
@@ -135,6 +142,8 @@ var (
 	windows   = map[uintptr]*window{}
 	wndProcCB uintptr // C callback created once
 )
+
+var _ wtypes.Window = (*window)(nil)
 
 type window struct {
 	mu   sync.Mutex
@@ -530,7 +539,42 @@ func (w *window) ShouldClose() bool {
 	return w.shouldClose
 }
 
-func (w *window) PollEvents() {
+func (w *window) PollEvents() { w.dispatch(0) }
+
+func (w *window) WaitEvents() { w.dispatch(-1) }
+
+func (w *window) WaitEventsTimeout(d time.Duration) {
+	if d <= 0 {
+		w.dispatch(0)
+		return
+	}
+	w.dispatch(d)
+}
+
+// Post wakes a blocked wait. WM_NULL reaches the window procedure and is passed
+// to DefWindowProc, so the only effect is that the wait returns.
+func (w *window) Post() {
+	w.mu.Lock()
+	destroyed := w.destroyed
+	w.mu.Unlock()
+	if destroyed {
+		return
+	}
+	var result int32
+	ffi.CallFunction(&cifPostMessageW, _PostMessageW, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&w.hwnd), pU32(wmNull), pU64(0), pI64(0)})
+}
+
+// dispatch drains the thread's message queue. A negative timeout blocks until a
+// message or a Post arrives, zero returns at once, and a positive one blocks
+// for at most that long.
+func (w *window) dispatch(timeout time.Duration) {
+	w.mu.Lock()
+	destroyed := w.destroyed
+	w.mu.Unlock()
+	if timeout != 0 && !destroyed {
+		msgWait(timeout)
+	}
 	var msg winMsg
 	var pin runtime.Pinner
 	pin.Pin(&msg)
@@ -814,6 +858,41 @@ func trimNullW(b []uint16) []uint16 {
 
 func pU32(v uint32) unsafe.Pointer { return unsafe.Pointer(&v) }
 func pI32(v int32) unsafe.Pointer  { return unsafe.Pointer(&v) }
+func pU64(v uint64) unsafe.Pointer { return unsafe.Pointer(&v) }
+func pI64(v int64) unsafe.Pointer  { return unsafe.Pointer(&v) }
+
+// msgWait blocks until input arrives for this thread or timeout elapses; a
+// negative timeout blocks indefinitely. MWMO_INPUTAVAILABLE makes it return for
+// input already sitting in the queue, which is what keeps it correct next to a
+// PeekMessage loop: without it the wait ignores messages the loop has already
+// looked at and blocks with work outstanding.
+func msgWait(timeout time.Duration) {
+	ms := infinite
+	if timeout >= 0 {
+		ms = timeoutMs(timeout)
+	}
+	var (
+		count   uint32
+		handles unsafe.Pointer
+		mask    = qsAllInput
+		flags   = mwmoInputAvailable
+		result  uint32
+	)
+	ffi.CallFunction(&cifMsgWaitForMultipleObjectsEx, _MsgWaitForMultipleObjectsEx, unsafe.Pointer(&result),
+		[]unsafe.Pointer{
+			unsafe.Pointer(&count), unsafe.Pointer(&handles),
+			unsafe.Pointer(&ms), unsafe.Pointer(&mask), unsafe.Pointer(&flags),
+		})
+}
+
+// timeoutMs rounds d up to whole milliseconds, keeping it clear of INFINITE.
+func timeoutMs(d time.Duration) uint32 {
+	ms := (d + time.Millisecond - 1) / time.Millisecond
+	if ms >= time.Duration(infinite) {
+		return infinite - 1
+	}
+	return uint32(ms)
+}
 
 // TRACKMOUSEEVENT struct: cbSize(u32) + dwFlags(u32) + hwndTrack(ptr) + dwHoverTime(u32)
 // On 64-bit Windows: 4+4+8+4 = 20 bytes, but struct is padded to 24 for alignment.

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Quikcad/quikwin/internal/platform/wake"
+
 	"github.com/lukem570/wayland-go/pkg/wayland"
 	"github.com/lukem570/wayland-go/pkg/wl"
 )
@@ -121,7 +123,7 @@ func (w *window) readOffer(offer *wayland.DataOffer, mime string) string {
 	var out []byte
 	buf := make([]byte, 4096)
 	for {
-		if !pollWait(int32(r), 200*time.Millisecond) {
+		if !wake.Wait(int32(r), 200*time.Millisecond) {
 			break
 		}
 		n, rerr := sysRead(r, buf)

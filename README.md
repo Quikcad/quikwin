@@ -39,6 +39,39 @@ for !win.ShouldClose() {
 }
 ```
 
+## Event loop
+
+`PollEvents` returns immediately, so a loop built on it spins whether or not
+anything happened. An idle application should block instead:
+
+```go
+for !win.ShouldClose() {
+    win.WaitEvents() // sleeps until something arrives
+    // render here
+}
+```
+
+An application that animates wants a bounded block, so the loop still runs
+when nothing arrives:
+
+```go
+for !win.ShouldClose() {
+    win.WaitEventsTimeout(16 * time.Millisecond)
+    // render here
+}
+```
+
+`Post` wakes a blocked wait from any goroutine, so work finishing off the UI
+goroutine can ask for a frame:
+
+```go
+go func() {
+    doc := load(path)
+    ui.SetDocument(doc)
+    win.Post()
+}()
+```
+
 ## Vulkan surface
 
 ```go
@@ -71,6 +104,9 @@ type Window interface {
 
     ShouldClose() bool
     PollEvents()
+    WaitEvents()
+    WaitEventsTimeout(d time.Duration)
+    Post()
 
     SetTitle(title string)
     SetCursor(shape CursorShape)

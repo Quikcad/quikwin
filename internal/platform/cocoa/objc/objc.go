@@ -33,10 +33,14 @@ var (
 	fpObjCRegisterClassPair   unsafe.Pointer
 	fpObjCSetAssociatedObject unsafe.Pointer
 	fpObjCGetAssociatedObject unsafe.Pointer
+	fpPoolPush                unsafe.Pointer
+	fpPoolPop                 unsafe.Pointer
 
 	cifMsg0          types.CallInterface // (id, SEL) → id
 	cifMsg1p         types.CallInterface // (id, SEL, id) → id
 	cifMsg1pVoid     types.CallInterface // (id, SEL, ptr) → void
+	cifMsg1p1bVoid   types.CallInterface // (id, SEL, ptr, i32) → void
+	cifMsg1f         types.CallInterface // (id, SEL, f64) → id
 	cifMsg1i         types.CallInterface // (id, SEL, i64) → id
 	cifMsg1iVoid     types.CallInterface // (id, SEL, i64) → void
 	cifMsg1bVoid     types.CallInterface // (id, SEL, i32) → void
@@ -56,6 +60,9 @@ var (
 	cifRegisterClass types.CallInterface
 	cifNextEvent     types.CallInterface // nextEventMatchingMask:untilDate:inMode:dequeue:
 	cifMsg0Point     types.CallInterface // (id, SEL) → NSPoint (struct{f64, f64})
+	cifOtherEvent    types.CallInterface // otherEventWithType:location:...:data2:
+	cifPoolPush      types.CallInterface // () → void*
+	cifPoolPop       types.CallInterface // (void*) → void
 	cifMsg0Rect      types.CallInterface // (id, SEL) → NSRect  (struct{f64, f64, f64, f64})
 )
 
@@ -90,6 +97,7 @@ var tNSRect = &types.TypeDescriptor{
 
 var (
 	tPtr  = types.PointerTypeDescriptor
+	tI16  = types.SInt16TypeDescriptor
 	tI32  = types.SInt32TypeDescriptor
 	tI64  = types.SInt64TypeDescriptor
 	tU64  = types.UInt64TypeDescriptor
@@ -150,6 +158,8 @@ func loadSymbols() error {
 		{&fpObjCRegisterClassPair, "objc_registerClassPair"},
 		{&fpObjCSetAssociatedObject, "objc_setAssociatedObject"},
 		{&fpObjCGetAssociatedObject, "objc_getAssociatedObject"},
+		{&fpPoolPush, "objc_autoreleasePoolPush"},
+		{&fpPoolPop, "objc_autoreleasePoolPop"},
 	} {
 		var err error
 		if *p.dst, err = o(p.name); err != nil {
@@ -183,6 +193,8 @@ func prepareCIFs() error {
 		{&cifMsg0, tPtr, []*types.TypeDescriptor{tPtr, tPtr}},
 		{&cifMsg1p, tPtr, []*types.TypeDescriptor{tPtr, tPtr, tPtr}},
 		{&cifMsg1pVoid, tVoid, []*types.TypeDescriptor{tPtr, tPtr, tPtr}},
+		{&cifMsg1p1bVoid, tVoid, []*types.TypeDescriptor{tPtr, tPtr, tPtr, tI32}},
+		{&cifMsg1f, tPtr, []*types.TypeDescriptor{tPtr, tPtr, tF64}},
 		{&cifMsg1i, tPtr, []*types.TypeDescriptor{tPtr, tPtr, tI64}},
 		{&cifMsg1iVoid, tVoid, []*types.TypeDescriptor{tPtr, tPtr, tI64}},
 		{&cifMsg1bVoid, tVoid, []*types.TypeDescriptor{tPtr, tPtr, tI32}},
@@ -207,6 +219,11 @@ func prepareCIFs() error {
 		{&cifMsg0Point, tNSPoint, []*types.TypeDescriptor{tPtr, tPtr}},
 		// (id, SEL) → NSRect
 		{&cifMsg0Rect, tNSRect, []*types.TypeDescriptor{tPtr, tPtr}},
+		// (cls, sel, type u64, NSPoint as 2 f64, flags u64, timestamp f64,
+		// windowNumber i64, context id, subtype i16, data1 i64, data2 i64) → id
+		{&cifOtherEvent, tPtr, []*types.TypeDescriptor{tPtr, tPtr, tU64, tF64, tF64, tU64, tF64, tI64, tPtr, tI16, tI64, tI64}},
+		{&cifPoolPush, tPtr, []*types.TypeDescriptor{}},
+		{&cifPoolPop, tVoid, []*types.TypeDescriptor{tPtr}},
 	} {
 		if err := prep(e.cif, e.ret, e.args); err != nil {
 			return fmt.Errorf("quikwin/cocoa/objc: PrepareCallInterface: %w", err)
@@ -390,4 +407,47 @@ func NextEvent(app, sel unsafe.Pointer, mask uint64, untilDate, mode unsafe.Poin
 		[]unsafe.Pointer{unsafe.Pointer(&app), unsafe.Pointer(&sel),
 			unsafe.Pointer(&mask), unsafe.Pointer(&untilDate), unsafe.Pointer(&mode), unsafe.Pointer(&dequeue)})
 	return ret
+}
+
+// MsgSend1p1bVoid: (id, SEL, id, BOOL) → void
+func MsgSend1p1bVoid(recv, sel, arg unsafe.Pointer, flag int32) {
+	ffi.CallFunction(&cifMsg1p1bVoid, fpObjCMsgSend, nil,
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&arg), unsafe.Pointer(&flag)})
+}
+
+// MsgSend1f: (id, SEL, f64) → id
+func MsgSend1f(recv, sel unsafe.Pointer, v float64) unsafe.Pointer {
+	var ret unsafe.Pointer
+	ffi.CallFunction(&cifMsg1f, fpObjCMsgSend, unsafe.Pointer(&ret),
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&v)})
+	return ret
+}
+
+// OtherEvent wraps +[NSEvent otherEventWithType:location:modifierFlags:
+// timestamp:windowNumber:context:subtype:data1:data2:]. The NSPoint location is
+// passed as its two CGFloats, which lands in the same argument registers the
+// struct would on both arm64 and x86_64.
+func OtherEvent(cls, sel unsafe.Pointer, evType uint64, x, y float64, flags uint64,
+	timestamp float64, windowNumber int64, context unsafe.Pointer, subtype int16, data1, data2 int64) unsafe.Pointer {
+	var ret unsafe.Pointer
+	ffi.CallFunction(&cifOtherEvent, fpObjCMsgSend, unsafe.Pointer(&ret),
+		[]unsafe.Pointer{unsafe.Pointer(&cls), unsafe.Pointer(&sel),
+			unsafe.Pointer(&evType), unsafe.Pointer(&x), unsafe.Pointer(&y),
+			unsafe.Pointer(&flags), unsafe.Pointer(&timestamp), unsafe.Pointer(&windowNumber),
+			unsafe.Pointer(&context), unsafe.Pointer(&subtype),
+			unsafe.Pointer(&data1), unsafe.Pointer(&data2)})
+	return ret
+}
+
+// PoolPush wraps objc_autoreleasePoolPush. Every PoolPush must be matched by a
+// PoolPop with the token it returned, on the same thread.
+func PoolPush() unsafe.Pointer {
+	var ret unsafe.Pointer
+	ffi.CallFunction(&cifPoolPush, fpPoolPush, unsafe.Pointer(&ret), []unsafe.Pointer{})
+	return ret
+}
+
+// PoolPop wraps objc_autoreleasePoolPop.
+func PoolPop(token unsafe.Pointer) {
+	ffi.CallFunction(&cifPoolPop, fpPoolPop, nil, []unsafe.Pointer{unsafe.Pointer(&token)})
 }

@@ -20,33 +20,35 @@ var (
 	_dwmapi   unsafe.Pointer
 
 	// user32
-	_RegisterClassExW  unsafe.Pointer
-	_CreateWindowExW   unsafe.Pointer
-	_DestroyWindow     unsafe.Pointer
-	_ShowWindow        unsafe.Pointer
-	_PeekMessageW      unsafe.Pointer
-	_TranslateMessage  unsafe.Pointer
-	_DispatchMessageW  unsafe.Pointer
-	_DefWindowProcW    unsafe.Pointer
-	_PostQuitMessage   unsafe.Pointer
-	_GetClientRect     unsafe.Pointer
-	_SetWindowTextW    unsafe.Pointer
-	_SetWindowPos      unsafe.Pointer
-	_LoadCursorW       unsafe.Pointer
-	_SetCursor         unsafe.Pointer
-	_GetDC             unsafe.Pointer
-	_ReleaseDC         unsafe.Pointer
-	_InvalidateRect    unsafe.Pointer
-	_DragAcceptFiles   unsafe.Pointer
-	_DragQueryFileW    unsafe.Pointer
-	_DragFinish        unsafe.Pointer
-	_SetWindowLongPtrW unsafe.Pointer
-	_GetWindowLongPtrW unsafe.Pointer
-	_AdjustWindowRect  unsafe.Pointer
-	_MoveWindow        unsafe.Pointer
-	_ReleaseCapture    unsafe.Pointer
-	_ScreenToClient    unsafe.Pointer
-	_TrackMouseEvent   unsafe.Pointer
+	_RegisterClassExW            unsafe.Pointer
+	_CreateWindowExW             unsafe.Pointer
+	_DestroyWindow               unsafe.Pointer
+	_ShowWindow                  unsafe.Pointer
+	_PeekMessageW                unsafe.Pointer
+	_PostMessageW                unsafe.Pointer
+	_MsgWaitForMultipleObjectsEx unsafe.Pointer
+	_TranslateMessage            unsafe.Pointer
+	_DispatchMessageW            unsafe.Pointer
+	_DefWindowProcW              unsafe.Pointer
+	_PostQuitMessage             unsafe.Pointer
+	_GetClientRect               unsafe.Pointer
+	_SetWindowTextW              unsafe.Pointer
+	_SetWindowPos                unsafe.Pointer
+	_LoadCursorW                 unsafe.Pointer
+	_SetCursor                   unsafe.Pointer
+	_GetDC                       unsafe.Pointer
+	_ReleaseDC                   unsafe.Pointer
+	_InvalidateRect              unsafe.Pointer
+	_DragAcceptFiles             unsafe.Pointer
+	_DragQueryFileW              unsafe.Pointer
+	_DragFinish                  unsafe.Pointer
+	_SetWindowLongPtrW           unsafe.Pointer
+	_GetWindowLongPtrW           unsafe.Pointer
+	_AdjustWindowRect            unsafe.Pointer
+	_MoveWindow                  unsafe.Pointer
+	_ReleaseCapture              unsafe.Pointer
+	_ScreenToClient              unsafe.Pointer
+	_TrackMouseEvent             unsafe.Pointer
 
 	// kernel32
 	_GetModuleHandleW unsafe.Pointer
@@ -55,27 +57,29 @@ var (
 	_DwmSetWindowAttribute unsafe.Pointer
 
 	// CIFs
-	cifRegisterClassExW      types.CallInterface
-	cifCreateWindowExW       types.CallInterface
-	cifDestroyWindow         types.CallInterface
-	cifShowWindow            types.CallInterface
-	cifPeekMessageW          types.CallInterface
-	cifTranslateMessage      types.CallInterface
-	cifDispatchMessageW      types.CallInterface
-	cifDefWindowProcW        types.CallInterface
-	cifGetClientRect         types.CallInterface
-	cifSetWindowTextW        types.CallInterface
-	cifSetWindowPos          types.CallInterface
-	cifLoadCursorW           types.CallInterface
-	cifSetCursor             types.CallInterface
-	cifGetModuleHandleW      types.CallInterface
-	cifDwmSetWindowAttribute types.CallInterface
-	cifMoveWindow            types.CallInterface
-	cifSetWindowLongPtrW     types.CallInterface
-	cifGetWindowLongPtrW     types.CallInterface
-	cifReleaseCapture        types.CallInterface
-	cifScreenToClient        types.CallInterface
-	cifTrackMouseEvent       types.CallInterface
+	cifRegisterClassExW            types.CallInterface
+	cifCreateWindowExW             types.CallInterface
+	cifDestroyWindow               types.CallInterface
+	cifShowWindow                  types.CallInterface
+	cifPeekMessageW                types.CallInterface
+	cifPostMessageW                types.CallInterface
+	cifMsgWaitForMultipleObjectsEx types.CallInterface
+	cifTranslateMessage            types.CallInterface
+	cifDispatchMessageW            types.CallInterface
+	cifDefWindowProcW              types.CallInterface
+	cifGetClientRect               types.CallInterface
+	cifSetWindowTextW              types.CallInterface
+	cifSetWindowPos                types.CallInterface
+	cifLoadCursorW                 types.CallInterface
+	cifSetCursor                   types.CallInterface
+	cifGetModuleHandleW            types.CallInterface
+	cifDwmSetWindowAttribute       types.CallInterface
+	cifMoveWindow                  types.CallInterface
+	cifSetWindowLongPtrW           types.CallInterface
+	cifGetWindowLongPtrW           types.CallInterface
+	cifReleaseCapture              types.CallInterface
+	cifScreenToClient              types.CallInterface
+	cifTrackMouseEvent             types.CallInterface
 )
 
 var (
@@ -125,6 +129,8 @@ func loadSymbols() error {
 		{&_DestroyWindow, u, "DestroyWindow"},
 		{&_ShowWindow, u, "ShowWindow"},
 		{&_PeekMessageW, u, "PeekMessageW"},
+		{&_PostMessageW, u, "PostMessageW"},
+		{&_MsgWaitForMultipleObjectsEx, u, "MsgWaitForMultipleObjectsEx"},
 		{&_TranslateMessage, u, "TranslateMessage"},
 		{&_DispatchMessageW, u, "DispatchMessageW"},
 		{&_DefWindowProcW, u, "DefWindowProcW"},
@@ -181,6 +187,10 @@ func prepareCIFs() error {
 		{&cifShowWindow, _i32, []*types.TypeDescriptor{_ptr, _i32}},
 		// PeekMessageW(*MSG, HWND, min, max, remove) → BOOL
 		{&cifPeekMessageW, _i32, []*types.TypeDescriptor{_ptr, _ptr, _u32, _u32, _u32}},
+		// PostMessageW(HWND, msg, wParam, lParam) → BOOL
+		{&cifPostMessageW, _i32, []*types.TypeDescriptor{_ptr, _u32, _u64, _i64}},
+		// MsgWaitForMultipleObjectsEx(nCount, pHandles, ms, wakeMask, flags) → DWORD
+		{&cifMsgWaitForMultipleObjectsEx, _u32, []*types.TypeDescriptor{_u32, _ptr, _u32, _u32, _u32}},
 		// TranslateMessage(*MSG) → BOOL
 		{&cifTranslateMessage, _i32, []*types.TypeDescriptor{_ptr}},
 		// DispatchMessageW(*MSG) → LRESULT

@@ -8,8 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
+	"github.com/Quikcad/quikwin/internal/platform/wake"
 	"github.com/Quikcad/quikwin/internal/platform/wtypes"
 	"github.com/go-webgpu/goffi/ffi"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
@@ -114,10 +116,16 @@ const xaString = uint64(31)
 // CurrentTime
 const currentTime = uint64(0)
 
+var _ wtypes.Window = (*window)(nil)
+
 type window struct {
 	mu  sync.Mutex
 	dpy unsafe.Pointer // Display*
 	win uint64         // Window XID
+
+	// wake releases a blocked dispatch when Post is called off the UI
+	// goroutine. Xlib is not thread-safe, so Post touches the pipe only.
+	wake *wake.Pipe
 
 	width, height       uint32
 	minWidth, minHeight uint32
@@ -193,10 +201,17 @@ func New(cfg *wtypes.Config) (*window, error) {
 		return nil, fmt.Errorf("quikwin/x11: XOpenDisplay failed (DISPLAY not set?)")
 	}
 
+	wakePipe, err := wake.NewPipe()
+	if err != nil {
+		xCloseDisplay(dpy)
+		return nil, err
+	}
+
 	root := xDefaultRootWindow(dpy)
 	win := xCreateSimpleWindow(dpy, root, 0, 0, cfg.Width, cfg.Height, 0, 0, 0)
 
 	w := &window{
+		wake:      wakePipe,
 		dpy:       dpy,
 		win:       win,
 		width:     cfg.Width,
@@ -387,7 +402,40 @@ func (w *window) ShouldClose() bool {
 	return w.shouldClose
 }
 
-func (w *window) PollEvents() {
+func (w *window) PollEvents() { w.dispatch(0) }
+
+func (w *window) WaitEvents() { w.dispatch(-1) }
+
+func (w *window) WaitEventsTimeout(d time.Duration) {
+	if d <= 0 {
+		w.dispatch(0)
+		return
+	}
+	w.dispatch(d)
+}
+
+func (w *window) Post() { w.wake.Signal() }
+
+// dispatch drains the X queue. A negative timeout blocks until an event or a
+// Post arrives, zero returns at once, and a positive one blocks for at most
+// that long.
+//
+// The wait only happens with the queue empty: XPending flushes the request
+// buffer and pulls anything already on the socket, so a zero from it means
+// there is genuinely nothing to read and the connection fd is safe to block on.
+func (w *window) dispatch(timeout time.Duration) {
+	w.mu.Lock()
+	destroyed := w.destroyed
+	w.mu.Unlock()
+	if destroyed {
+		return
+	}
+	if timeout != 0 && xPending(w.dpy) == 0 {
+		_, posted := wake.WaitEither(xConnectionNumber(w.dpy), w.wake.ReadFD(), timeout)
+		if posted {
+			w.wake.Drain()
+		}
+	}
 	for xPending(w.dpy) > 0 {
 		var ev xEvent
 		xNextEvent(w.dpy, &ev)
@@ -488,6 +536,7 @@ func (w *window) Destroy() {
 	}
 	w.destroyed = true
 	w.mu.Unlock()
+	w.wake.Close()
 	xDestroyWindow(w.dpy, w.win)
 	xCloseDisplay(w.dpy)
 }
@@ -1009,6 +1058,13 @@ func xSelectInput(dpy unsafe.Pointer, win uint64, mask int64) {
 func xPending(dpy unsafe.Pointer) int32 {
 	var result int32
 	ffi.CallFunction(&cifXPending, _XPending, unsafe.Pointer(&result),
+		[]unsafe.Pointer{unsafe.Pointer(&dpy)})
+	return result
+}
+
+func xConnectionNumber(dpy unsafe.Pointer) int32 {
+	var result int32
+	ffi.CallFunction(&cifXConnectionNumber, _XConnectionNumber, unsafe.Pointer(&result),
 		[]unsafe.Pointer{unsafe.Pointer(&dpy)})
 	return result
 }
