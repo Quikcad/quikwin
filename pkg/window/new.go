@@ -1,6 +1,6 @@
 package window
 
-import "github.com/Quikcad/quikwin/internal/common"
+import "github.com/Quikcad/quikwin/internal/platform/common"
 
 // Option configures a new window.
 type Option = common.Option

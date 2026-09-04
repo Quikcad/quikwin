@@ -1,6 +1,6 @@
 package common
 
-import "github.com/Quikcad/quikwin/internal/wtypes"
+import "github.com/Quikcad/quikwin/internal/platform/wtypes"
 
 // Config is an alias for wtypes.Config so callers can use common.Config.
 type Config = wtypes.Config

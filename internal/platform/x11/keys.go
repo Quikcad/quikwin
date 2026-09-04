@@ -2,7 +2,7 @@
 
 package x11
 
-import "github.com/Quikcad/quikwin/internal/wtypes"
+import "github.com/Quikcad/quikwin/internal/platform/wtypes"
 
 // X11 keysym constants (from X11/keysymdef.h)
 const (

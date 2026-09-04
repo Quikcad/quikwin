@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/Quikcad/quikwin/internal/cocoa/objc"
-	"github.com/Quikcad/quikwin/internal/wtypes"
+	"github.com/Quikcad/quikwin/internal/platform/cocoa/objc"
+	"github.com/Quikcad/quikwin/internal/platform/wtypes"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
 )
 

@@ -9,7 +9,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
-	"github.com/Quikcad/quikwin/internal/wtypes"
+	"github.com/Quikcad/quikwin/internal/platform/wtypes"
 	"github.com/go-webgpu/goffi/ffi"
 	"github.com/go-webgpu/goffi/types"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"

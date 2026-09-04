@@ -3,7 +3,7 @@
 // Package objc wraps the raw goffi-driven Objective-C runtime calls used by
 // the cocoa backend. It owns the dylib loading, libffi CIF setup and the
 // typed msgSend helpers; everything above (selectors, NSApplication, the
-// window struct) lives in the parent internal/cocoa package.
+// window struct) lives in the parent internal/platform/cocoa package.
 package objc
 
 import (
