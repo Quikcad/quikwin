@@ -26,6 +26,7 @@ var (
 	_XDestroyWindow       unsafe.Pointer
 	_XSelectInput         unsafe.Pointer
 	_XPending             unsafe.Pointer
+	_XConnectionNumber    unsafe.Pointer
 	_XNextEvent           unsafe.Pointer
 	_XStoreName           unsafe.Pointer
 	_XResizeWindow        unsafe.Pointer
@@ -62,6 +63,7 @@ var (
 	cifXDestroyWindow       types.CallInterface
 	cifXSelectInput         types.CallInterface
 	cifXPending             types.CallInterface
+	cifXConnectionNumber    types.CallInterface
 	cifXNextEvent           types.CallInterface
 	cifXStoreName           types.CallInterface
 	cifXResizeWindow        types.CallInterface
@@ -138,6 +140,7 @@ func loadSymbols() error {
 		{&_XDestroyWindow, "XDestroyWindow"},
 		{&_XSelectInput, "XSelectInput"},
 		{&_XPending, "XPending"},
+		{&_XConnectionNumber, "XConnectionNumber"},
 		{&_XNextEvent, "XNextEvent"},
 		{&_XStoreName, "XStoreName"},
 		{&_XResizeWindow, "XResizeWindow"},
@@ -195,6 +198,8 @@ func prepareCIFs() error {
 		{&cifXSelectInput, _i32, []*types.TypeDescriptor{_ptr, _u64, _i64}},
 		// XPending(ptr) → i32
 		{&cifXPending, _i32, []*types.TypeDescriptor{_ptr}},
+		// XConnectionNumber(ptr) → i32
+		{&cifXConnectionNumber, _i32, []*types.TypeDescriptor{_ptr}},
 		// XNextEvent(ptr, ptr) → i32
 		{&cifXNextEvent, _i32, []*types.TypeDescriptor{_ptr, _ptr}},
 		// XStoreName(ptr, u64, ptr) → i32

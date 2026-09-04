@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/Quikcad/quikwin/internal/platform/cocoa/objc"
@@ -61,6 +62,11 @@ var (
 	selUpdateWindows                 unsafe.Pointer
 	selSetDelegate                   unsafe.Pointer
 	selDistantPast                   unsafe.Pointer
+	selDistantFuture                 unsafe.Pointer
+	selDateWithTimeIntervalSinceNow  unsafe.Pointer
+	selRetain                        unsafe.Pointer
+	selPostEvent                     unsafe.Pointer
+	selOtherEventWithType            unsafe.Pointer
 	selStringWithUTF8String          unsafe.Pointer
 	selInitWithContentRect           unsafe.Pointer
 	selMakeKeyAndOrderFront          unsafe.Pointer
@@ -133,6 +139,11 @@ func initSels() {
 		selUpdateWindows = reg("updateWindows")
 		selSetDelegate = reg("setDelegate:")
 		selDistantPast = reg("distantPast")
+		selDistantFuture = reg("distantFuture")
+		selDateWithTimeIntervalSinceNow = reg("dateWithTimeIntervalSinceNow:")
+		selRetain = reg("retain")
+		selPostEvent = reg("postEvent:atStart:")
+		selOtherEventWithType = reg("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:")
 		selStringWithUTF8String = reg("stringWithUTF8String:")
 		selInitWithContentRect = reg("initWithContentRect:styleMask:backing:defer:")
 		selMakeKeyAndOrderFront = reg("makeKeyAndOrderFront:")
@@ -205,8 +216,27 @@ var (
 	nsAppOnce sync.Once
 )
 
+// Objects the event loop needs on every pass. Resolving them per call meant an
+// NSString allocation and two runtime lookups for each poll, which a caller
+// running at a few hundred hertz pays for. Each is retained: they outlive any
+// autorelease pool the loop pushes.
+var (
+	nsEventClass    unsafe.Pointer
+	nsDateClass     unsafe.Pointer
+	nsDefaultMode   unsafe.Pointer // @"kCFRunLoopDefaultMode"
+	nsDistantPast   unsafe.Pointer
+	nsDistantFuture unsafe.Pointer
+)
+
 func initApp() {
 	nsAppOnce.Do(func() {
+		nsEventClass = objc.GetClass("NSEvent")
+		nsDateClass = objc.GetClass("NSDate")
+		retain := func(p unsafe.Pointer) unsafe.Pointer { return objc.MsgSend0(p, selRetain) }
+		nsDefaultMode = retain(nsString("kCFRunLoopDefaultMode"))
+		nsDistantPast = retain(objc.MsgSend0(nsDateClass, selDistantPast))
+		nsDistantFuture = retain(objc.MsgSend0(nsDateClass, selDistantFuture))
+
 		cls := objc.GetClass("NSApplication")
 		nsApp = objc.MsgSend0(cls, selSharedApplication)
 		objc.MsgSend1iVoid(nsApp, selSetActivationPolicy, 0) // NSApplicationActivationPolicyRegular = 0
@@ -339,21 +369,22 @@ func addMethod(selName, typeStr string, fn any) {
 // ---------------------------------------------------------------------------
 
 const (
-	nsEventTypeLeftMouseDown     int64 = 1
-	nsEventTypeLeftMouseUp       int64 = 2
-	nsEventTypeRightMouseDown    int64 = 3
-	nsEventTypeRightMouseUp      int64 = 4
-	nsEventTypeMouseMoved        int64 = 5
-	nsEventTypeLeftMouseDragged  int64 = 6
-	nsEventTypeRightMouseDragged int64 = 7
-	nsEventTypeKeyDown           int64 = 10
-	nsEventTypeKeyUp             int64 = 11
-	nsEventTypeFlagsChanged      int64 = 12
-	nsEventTypeScrollWheel       int64 = 22
-	nsEventTypeOtherMouseDown    int64 = 25
-	nsEventTypeOtherMouseUp      int64 = 26
-	nsEventTypeOtherMouseDragged int64 = 27
-	nsEventTypeMagnify           int64 = 30
+	nsEventTypeLeftMouseDown      int64 = 1
+	nsEventTypeLeftMouseUp        int64 = 2
+	nsEventTypeRightMouseDown     int64 = 3
+	nsEventTypeRightMouseUp       int64 = 4
+	nsEventTypeMouseMoved         int64 = 5
+	nsEventTypeLeftMouseDragged   int64 = 6
+	nsEventTypeRightMouseDragged  int64 = 7
+	nsEventTypeKeyDown            int64 = 10
+	nsEventTypeKeyUp              int64 = 11
+	nsEventTypeFlagsChanged       int64 = 12
+	nsEventTypeScrollWheel        int64 = 22
+	nsEventTypeOtherMouseDown     int64 = 25
+	nsEventTypeOtherMouseUp       int64 = 26
+	nsEventTypeOtherMouseDragged  int64 = 27
+	nsEventTypeMagnify            int64 = 30
+	nsEventTypeApplicationDefined int64 = 15
 )
 
 const nsEventMaskAny uint64 = ^uint64(0) // NSEventMaskAny
@@ -508,6 +539,8 @@ func modFlagsToMod(flags uint64) wtypes.Mod {
 // window
 // ---------------------------------------------------------------------------
 
+var _ wtypes.Window = (*window)(nil)
+
 type window struct {
 	nswin      unsafe.Pointer
 	delegate   unsafe.Pointer
@@ -642,24 +675,74 @@ func (w *window) Size() (uint32, uint32) { return w.width, w.height }
 func (w *window) Scale() float32         { return w.scale }
 func (w *window) ShouldClose() bool      { return w.closed.Load() }
 
-func (w *window) PollEvents() {
+func (w *window) PollEvents() { w.dispatch(0) }
+
+func (w *window) WaitEvents() { w.dispatch(-1) }
+
+func (w *window) WaitEventsTimeout(d time.Duration) {
+	if d <= 0 {
+		w.dispatch(0)
+		return
+	}
+	w.dispatch(d)
+}
+
+// Post wakes a blocked wait with an application-defined event. AppKit retains
+// a posted event, so the pool this pushes can take the autoreleased original
+// back at once — and the pool is needed because Post runs off the UI goroutine,
+// where nothing else drains one.
+func (w *window) Post() {
 	if w.closed.Load() {
 		return
 	}
-	mode := nsString("kCFRunLoopDefaultMode")
-	dateCls := objc.GetClass("NSDate")
-	distantPast := objc.MsgSend0(dateCls, selDistantPast)
-	mask := uint64(nsEventMaskAny)
+	pool := objc.PoolPush()
+	defer objc.PoolPop(pool)
 
+	event := objc.OtherEvent(nsEventClass, selOtherEventWithType,
+		uint64(nsEventTypeApplicationDefined), 0, 0, 0, 0, 0, nil, 0, 0, 0)
+	if event == nil {
+		return
+	}
+	objc.MsgSend1p1bVoid(nsApp, selPostEvent, event, 1)
+}
+
+// dispatch drains the AppKit queue. A negative timeout blocks until an event or
+// a Post arrives, zero returns at once, and a positive one blocks for at most
+// that long.
+func (w *window) dispatch(timeout time.Duration) {
+	if w.closed.Load() {
+		return
+	}
+	// AppKit autoreleases freely while events are handled, and this loop is the
+	// only thing resembling a run-loop iteration, so it owns the pool.
+	pool := objc.PoolPush()
+	defer objc.PoolPop(pool)
+
+	until := nsDistantPast
+	switch {
+	case timeout < 0:
+		until = nsDistantFuture
+	case timeout > 0:
+		until = objc.MsgSend1f(nsDateClass, selDateWithTimeIntervalSinceNow, timeout.Seconds())
+	}
+
+	handled := false
 	for {
-		event := objc.NextEvent(nsApp, selNextEventMatchingMask, mask, distantPast, mode, 1)
+		event := objc.NextEvent(nsApp, selNextEventMatchingMask, nsEventMaskAny, until, nsDefaultMode, 1)
 		if event == nil {
 			break
 		}
 		w.handleEvent(event)
 		objc.MsgSend1pVoid(nsApp, selSendEvent, event)
+		handled = true
+		// Only the first pass may block; the rest take what is already queued.
+		until = nsDistantPast
 	}
-	objc.MsgSend0(nsApp, selUpdateWindows)
+	// updateWindows can run layout and display work, so it stays off the passes
+	// that saw no event at all.
+	if handled {
+		objc.MsgSend0(nsApp, selUpdateWindows)
+	}
 }
 
 func (w *window) handleEvent(event unsafe.Pointer) {

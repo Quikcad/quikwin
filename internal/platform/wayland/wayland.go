@@ -10,6 +10,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/Quikcad/quikwin/internal/platform/wake"
 	"github.com/Quikcad/quikwin/internal/platform/wtypes"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
 	xdg "github.com/lukem570/wayland-go/pkg/protocols/stable/xdgshell"
@@ -20,6 +21,7 @@ import (
 )
 
 var (
+	_ wtypes.Window                       = (*window)(nil)
 	_ wayland.RegistryHandler             = (*window)(nil)
 	_ wayland.SeatHandler                 = (*window)(nil)
 	_ wayland.KeyboardHandler             = (*window)(nil)
@@ -32,6 +34,10 @@ var (
 
 type window struct {
 	mu sync.Mutex
+
+	// wake releases a blocked dispatch when Post is called off the UI
+	// goroutine.
+	wake *wake.Pipe
 
 	conn        *wl.Proxy
 	display     *wayland.Display
@@ -142,7 +148,14 @@ func New(cfg *wtypes.Config) (*window, error) {
 		return nil, fmt.Errorf("quikwin/wayland: %w (WAYLAND_DISPLAY not set?)", err)
 	}
 
+	wakePipe, err := wake.NewPipe()
+	if err != nil {
+		wl.Disconnect(conn)
+		return nil, err
+	}
+
 	w := &window{
+		wake:      wakePipe,
 		conn:      conn,
 		width:     cfg.Width,
 		height:    cfg.Height,
@@ -668,7 +681,34 @@ func (w *window) ShouldClose() bool {
 	return w.shouldClose
 }
 
-func (w *window) PollEvents() {
+func (w *window) PollEvents() { w.dispatch(0) }
+
+func (w *window) WaitEvents() { w.dispatch(-1) }
+
+func (w *window) WaitEventsTimeout(d time.Duration) {
+	if d <= 0 {
+		w.dispatch(0)
+		return
+	}
+	w.dispatch(d)
+}
+
+func (w *window) Post() { w.wake.Signal() }
+
+// dispatch drains the compositor queue. A negative timeout blocks until an
+// event or a Post arrives, zero returns at once, and a positive one blocks for
+// at most that long.
+//
+// The prepare_read/poll/read_events sequence is the wl_display protocol for
+// waiting on the connection: the read intent is registered before the poll so
+// that an event arriving in the window between the two still wakes it.
+func (w *window) dispatch(timeout time.Duration) {
+	w.mu.Lock()
+	destroyed := w.destroyed
+	w.mu.Unlock()
+	if destroyed {
+		return
+	}
 	d := w.conn.Pointer()
 	wl.DispatchPending(w.conn)
 	for displayPrepareRead(d) != 0 {
@@ -677,7 +717,11 @@ func (w *window) PollEvents() {
 	// Issue deferred window-state requests now, outside any dispatch callback.
 	w.applyPending()
 	wl.Flush(w.conn)
-	if fdReadable(displayGetFd(d)) {
+	display, posted := wake.WaitEither(displayGetFd(d), w.wake.ReadFD(), timeout)
+	if posted {
+		w.wake.Drain()
+	}
+	if display {
 		displayReadEvents(d)
 	} else {
 		displayCancelRead(d)
@@ -821,6 +865,8 @@ func (w *window) Destroy() {
 	}
 	w.destroyed = true
 	w.mu.Unlock()
+
+	w.wake.Close()
 
 	destroy := func(p *wl.Proxy) {
 		if p != nil {
