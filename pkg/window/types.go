@@ -1,6 +1,6 @@
 package window
 
-import "github.com/Quikcad/quikwin/internal/wtypes"
+import "github.com/Quikcad/quikwin/internal/platform/wtypes"
 
 type (
 	Key           = wtypes.Key

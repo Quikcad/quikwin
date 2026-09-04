@@ -1,12 +1,12 @@
 package cocoa
 
 import (
-	icocoa "github.com/Quikcad/quikwin/internal/cocoa"
+	icocoa "github.com/Quikcad/quikwin/internal/platform/cocoa"
 	"github.com/Quikcad/quikwin/pkg/window"
 )
 
 // TitlebarStyle controls the macOS titlebar appearance. Aliased to the
-// canonical type in internal/cocoa so the impl and the public interface
+// canonical type in internal/platform/cocoa so the impl and the public interface
 // reference the same type without forming an import cycle.
 type TitlebarStyle = icocoa.TitlebarStyle
 
@@ -17,7 +17,7 @@ const (
 )
 
 // MenuItem represents one item in a native macOS menu. Aliased to the
-// canonical type in internal/cocoa.
+// canonical type in internal/platform/cocoa.
 type MenuItem = icocoa.MenuItem
 
 // CocoaWindow exposes macOS-specific window capabilities.

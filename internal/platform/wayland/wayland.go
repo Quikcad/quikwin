@@ -10,7 +10,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/Quikcad/quikwin/internal/wtypes"
+	"github.com/Quikcad/quikwin/internal/platform/wtypes"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
 	xdg "github.com/lukem570/wayland-go/pkg/protocols/stable/xdgshell"
 	"github.com/lukem570/wayland-go/pkg/protocols/staging/cursorshapev1"

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/Quikcad/quikwin/internal/wtypes"
+	"github.com/Quikcad/quikwin/internal/platform/wtypes"
 	"github.com/go-webgpu/goffi/ffi"
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
 )

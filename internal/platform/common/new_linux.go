@@ -5,8 +5,8 @@ package common
 import (
 	"os"
 
-	"github.com/Quikcad/quikwin/internal/wayland"
-	"github.com/Quikcad/quikwin/internal/x11"
+	"github.com/Quikcad/quikwin/internal/platform/wayland"
+	"github.com/Quikcad/quikwin/internal/platform/x11"
 )
 
 func newPlatform(cfg *Config) (any, error) {
