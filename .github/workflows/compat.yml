@@ -31,3 +31,21 @@ jobs:
 
       - name: vet
         run: CGO_ENABLED=0 go vet ./...
+
+      - name: test
+        run: CGO_ENABLED=0 go test ./...
+
+      # linux/arm64 has no poll syscall, so a host build alone did not catch
+      # the backends drifting off it. Every desktop target gets built.
+      - name: crossbuild
+        run: |
+          fail=0
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
+            if GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build ./...; then
+              echo "  ok   $target"
+            else
+              echo "  FAIL $target"
+              fail=1
+            fi
+          done
+          exit $fail
