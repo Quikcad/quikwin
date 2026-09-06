@@ -38,6 +38,7 @@ var (
 
 	cifMsg0          types.CallInterface // (id, SEL) → id
 	cifMsg1p         types.CallInterface // (id, SEL, id) → id
+	cifMsg3p         types.CallInterface // (id, SEL, id, id, id) → id
 	cifMsg1pVoid     types.CallInterface // (id, SEL, ptr) → void
 	cifMsg1p1bVoid   types.CallInterface // (id, SEL, ptr, i32) → void
 	cifMsg1f         types.CallInterface // (id, SEL, f64) → id
@@ -192,6 +193,7 @@ func prepareCIFs() error {
 	for _, e := range []entry{
 		{&cifMsg0, tPtr, []*types.TypeDescriptor{tPtr, tPtr}},
 		{&cifMsg1p, tPtr, []*types.TypeDescriptor{tPtr, tPtr, tPtr}},
+		{&cifMsg3p, tPtr, []*types.TypeDescriptor{tPtr, tPtr, tPtr, tPtr, tPtr}},
 		{&cifMsg1pVoid, tVoid, []*types.TypeDescriptor{tPtr, tPtr, tPtr}},
 		{&cifMsg1p1bVoid, tVoid, []*types.TypeDescriptor{tPtr, tPtr, tPtr, tI32}},
 		{&cifMsg1f, tPtr, []*types.TypeDescriptor{tPtr, tPtr, tF64}},
@@ -316,6 +318,16 @@ func MsgSend1p(recv, sel, arg unsafe.Pointer) unsafe.Pointer {
 	var ret unsafe.Pointer
 	ffi.CallFunction(&cifMsg1p, fpObjCMsgSend, unsafe.Pointer(&ret),
 		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel), unsafe.Pointer(&arg)})
+	return ret
+}
+
+// MsgSend3p: (id, SEL, id, id, id) → id. Three pointer-width arguments, which
+// is what initWithTitle:action:keyEquivalent: takes (the action is a SEL).
+func MsgSend3p(recv, sel, a, b, c unsafe.Pointer) unsafe.Pointer {
+	var ret unsafe.Pointer
+	ffi.CallFunction(&cifMsg3p, fpObjCMsgSend, unsafe.Pointer(&ret),
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel),
+			unsafe.Pointer(&a), unsafe.Pointer(&b), unsafe.Pointer(&c)})
 	return ret
 }
 
