@@ -92,6 +92,7 @@ var (
 	selToggleFullScreen              unsafe.Pointer
 	selStyleMask                     unsafe.Pointer
 	selSetCollectionBehavior         unsafe.Pointer
+	selCollectionBehavior            unsafe.Pointer
 	selSetOpaque                     unsafe.Pointer
 	selSetBackgroundColor            unsafe.Pointer
 	selClearColor                    unsafe.Pointer
@@ -169,6 +170,7 @@ func initSels() {
 		selToggleFullScreen = reg("toggleFullScreen:")
 		selStyleMask = reg("styleMask")
 		selSetCollectionBehavior = reg("setCollectionBehavior:")
+		selCollectionBehavior = reg("collectionBehavior")
 		selSetOpaque = reg("setOpaque:")
 		selSetBackgroundColor = reg("setBackgroundColor:")
 		selClearColor = reg("clearColor")
@@ -733,7 +735,7 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 	case nsEventTypeKeyDown, nsEventTypeKeyUp:
 		vkCode := uint64(objc.MsgSend0i(event, selKeyCode))
 		key := macKeyToKey(vkCode)
-		isRepeat := objc.MsgSend0i(event, selIsARepeat) != 0
+		isRepeat := objc.MsgSend0Bool(event, selIsARepeat)
 		action := wtypes.Press
 		if evType == nsEventTypeKeyUp {
 			action = wtypes.Release
@@ -834,7 +836,7 @@ func (w *window) handleEvent(event unsafe.Pointer) {
 		dx := objc.MsgSend0f(event, selScrollingDeltaX)
 		dy := objc.MsgSend0f(event, selScrollingDeltaY)
 		// BOOL is signed char in ObjC; truncate to low byte and compare.
-		precise := int8(objc.MsgSend0i(event, selHasPreciseScrollingDeltas)) != 0
+		precise := objc.MsgSend0Bool(event, selHasPreciseScrollingDeltas)
 		if fn := w.onScroll; fn != nil {
 			fn(dx, dy, precise)
 		}
@@ -1007,9 +1009,37 @@ func (w *window) ToggleMaximize() {
 }
 
 // IsMaximized reports whether the window is currently in full-screen mode
-// (NSWindowStyleMaskFullScreen present in the live style mask).
+// (NSWindowStyleMaskFullScreen present in the live style mask). A zoomed
+// window is not full screen; ask IsZoomed for that.
 func (w *window) IsMaximized() bool {
 	return objc.MsgSend0u(w.nswin, selStyleMask)&nsWindowStyleMaskFullScreen != 0
+}
+
+// Zoom toggles the zoomed state — the window fills the screen and stays a
+// window. This is the other thing the green button does, on Option-click, and
+// it is what an application's own maximise control usually means.
+//
+// It differs from ToggleMaximize in what it leaves alone: the system menu bar
+// and the titlebar stay, and AppKit does not claim the Escape key, which in
+// full screen is bound to leaving it and is therefore unavailable to the
+// application for as long as the window is maximised.
+func (w *window) Zoom() {
+	// A window carrying NSWindowCollectionBehaviorFullScreenPrimary — which
+	// New sets, so that the green button enters full screen — answers zoom: by
+	// going full screen, which is the one thing this method exists to avoid.
+	// The bit is lifted for the call and put straight back, leaving
+	// ToggleMaximize unaffected.
+	behavior := objc.MsgSend0u(w.nswin, selCollectionBehavior)
+	objc.MsgSend1iVoid(w.nswin, selSetCollectionBehavior,
+		int64(behavior&^nsWindowCollectionBehaviorFullScreenPrimary))
+	objc.MsgSend1pVoid(w.nswin, selZoom, nil)
+	objc.MsgSend1iVoid(w.nswin, selSetCollectionBehavior, int64(behavior))
+}
+
+// IsZoomed reports whether the window is zoomed. It answers for the window
+// state alone: a full-screen window is not zoomed.
+func (w *window) IsZoomed() bool {
+	return objc.MsgSend0Bool(w.nswin, selIsZoomed)
 }
 
 // SetCornerRadius applies a corner radius to the content view's backing layer
