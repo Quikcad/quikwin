@@ -42,8 +42,16 @@ type CocoaWindow interface {
 
 	// Window-state controls (custom-chrome apps drive these from their own UI).
 	Minimize()
+	// ToggleMaximize enters or leaves native full screen, which is what the
+	// green button does on a plain click. Full screen binds Escape to leaving
+	// it, so an application with its own meaning for that key wants Zoom.
 	ToggleMaximize()
 	IsMaximized() bool
+	// Zoom fills the screen and stays a window — the green button's
+	// Option-click behaviour. The system menu bar and the titlebar stay, and
+	// the Escape key remains the application's.
+	Zoom()
+	IsZoomed() bool
 
 	// SetCornerRadius rounds the window's content. Implementations apply this
 	// to the CAMetalLayer backing the content view; pair with a transparent

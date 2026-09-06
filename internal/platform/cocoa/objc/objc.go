@@ -46,6 +46,7 @@ var (
 	cifMsg1iVoid     types.CallInterface // (id, SEL, i64) → void
 	cifMsg1bVoid     types.CallInterface // (id, SEL, i32) → void
 	cifMsg0i         types.CallInterface // (id, SEL) → i64
+	cifMsg0b         types.CallInterface // (id, SEL) → BOOL (signed char)
 	cifMsg0u         types.CallInterface // (id, SEL) → u64
 	cifMsg0f         types.CallInterface // (id, SEL) → f64
 	cifMsg1bReti     types.CallInterface // (id, SEL, i32) → i32
@@ -98,6 +99,7 @@ var tNSRect = &types.TypeDescriptor{
 
 var (
 	tPtr  = types.PointerTypeDescriptor
+	tI8   = types.SInt8TypeDescriptor
 	tI16  = types.SInt16TypeDescriptor
 	tI32  = types.SInt32TypeDescriptor
 	tI64  = types.SInt64TypeDescriptor
@@ -201,6 +203,7 @@ func prepareCIFs() error {
 		{&cifMsg1iVoid, tVoid, []*types.TypeDescriptor{tPtr, tPtr, tI64}},
 		{&cifMsg1bVoid, tVoid, []*types.TypeDescriptor{tPtr, tPtr, tI32}},
 		{&cifMsg0i, tI64, []*types.TypeDescriptor{tPtr, tPtr}},
+		{&cifMsg0b, tI8, []*types.TypeDescriptor{tPtr, tPtr}},
 		{&cifMsg0u, tU64, []*types.TypeDescriptor{tPtr, tPtr}},
 		{&cifMsg0f, tF64, []*types.TypeDescriptor{tPtr, tPtr}},
 		{&cifMsg1bReti, tI32, []*types.TypeDescriptor{tPtr, tPtr, tI32}},
@@ -355,6 +358,16 @@ func MsgSend0i(recv, sel unsafe.Pointer) int64 {
 	ffi.CallFunction(&cifMsg0i, fpObjCMsgSend, unsafe.Pointer(&ret),
 		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
 	return ret
+}
+
+// MsgSend0Bool: (id, SEL) → BOOL. A BOOL is a signed char, and objc_msgSend
+// leaves the rest of the return register undefined, so reading one as a wider
+// integer can pick up bits that were never part of the answer.
+func MsgSend0Bool(recv, sel unsafe.Pointer) bool {
+	var ret int8
+	ffi.CallFunction(&cifMsg0b, fpObjCMsgSend, unsafe.Pointer(&ret),
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel)})
+	return ret != 0
 }
 
 // MsgSend0u: (id, SEL) → u64
