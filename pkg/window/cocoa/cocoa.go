@@ -32,7 +32,12 @@ type CocoaWindow interface {
 	// Only meaningful when TitlebarTransparent is active.
 	SetTrafficLightsOffset(x, y float32)
 
-	// Native menu bar (the application-level dropdown menus).
+	// SetMenuBar installs the application's menu bar. macOS has one menu bar
+	// per application rather than per window, so this replaces whatever a
+	// previous call installed, from whichever window it was called on.
+	//
+	// The first menu — the one named after the application, holding Services,
+	// Hide and Quit — is supplied by quikwin. items become the menus after it.
 	SetMenuBar(items []MenuItem)
 
 	// Window-state controls (custom-chrome apps drive these from their own UI).

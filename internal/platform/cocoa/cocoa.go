@@ -15,27 +15,6 @@ import (
 	vk "github.com/lukem570/vulkan-go/pkg/raw"
 )
 
-// TitlebarStyle controls the macOS titlebar appearance. Canonical home —
-// pkg/window/cocoa re-exports it via type alias. Importing pkg/window/cocoa
-// from here would cycle through pkg/window → internal/common → internal/cocoa.
-type TitlebarStyle uint8
-
-const (
-	TitlebarDefault     TitlebarStyle = iota
-	TitlebarHidden                    // no titlebar, no traffic lights
-	TitlebarTransparent               // transparent titlebar, content extends underneath
-)
-
-// MenuItem represents one item in a native macOS menu. Canonical home; the
-// public pkg/window/cocoa package re-exports it via type alias.
-type MenuItem struct {
-	Label     string
-	Shortcut  string
-	Action    func()
-	Children  []MenuItem
-	Separator bool
-}
-
 // init pins the main goroutine to the OS thread that started the runtime.
 // On darwin that's the process's main thread (thread 0) — the only thread
 // AppKit will accept NSWindow/NSApplication calls on. Doing this from a later
@@ -1014,8 +993,6 @@ func (w *window) SetTrafficLightsOffset(x, y float32) {
 		objc.MsgSend2fVoid(b, selSetFrameOrigin, fx, fy)
 	}
 }
-
-func (w *window) SetMenuBar(_ []MenuItem) {}
 
 // Minimize sends -[NSWindow miniaturize:] (sender unused).
 func (w *window) Minimize() {
