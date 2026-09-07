@@ -92,7 +92,9 @@ var (
 	selToggleFullScreen              unsafe.Pointer
 	selStyleMask                     unsafe.Pointer
 	selSetCollectionBehavior         unsafe.Pointer
-	selCollectionBehavior            unsafe.Pointer
+	selScreen                        unsafe.Pointer
+	selVisibleFrame                  unsafe.Pointer
+	selSetFrameDisplay               unsafe.Pointer
 	selSetOpaque                     unsafe.Pointer
 	selSetBackgroundColor            unsafe.Pointer
 	selClearColor                    unsafe.Pointer
@@ -170,7 +172,9 @@ func initSels() {
 		selToggleFullScreen = reg("toggleFullScreen:")
 		selStyleMask = reg("styleMask")
 		selSetCollectionBehavior = reg("setCollectionBehavior:")
-		selCollectionBehavior = reg("collectionBehavior")
+		selScreen = reg("screen")
+		selVisibleFrame = reg("visibleFrame")
+		selSetFrameDisplay = reg("setFrame:display:")
 		selSetOpaque = reg("setOpaque:")
 		selSetBackgroundColor = reg("setBackgroundColor:")
 		selClearColor = reg("clearColor")
@@ -533,6 +537,7 @@ type window struct {
 	mouseX, mouseY float64
 	closed         atomic.Bool
 	styleMask      uint64
+	preZoom        objc.Rect // frame to come back to when Zoom is undone
 
 	onResize      func(w, h uint32)
 	onLiveResize  func()
@@ -1023,17 +1028,29 @@ func (w *window) IsMaximized() bool {
 // and the titlebar stay, and AppKit does not claim the Escape key, which in
 // full screen is bound to leaving it and is therefore unavailable to the
 // application for as long as the window is maximised.
+//
+// The frame is set directly rather than by sending zoom:. New sets
+// NSWindowCollectionBehaviorFullScreenPrimary so that the green button enters
+// full screen, and a window carrying that bit answers zoom: by going full
+// screen instead — the one thing this method exists to avoid. Setting the
+// frame sidesteps that reading of the collection behaviour entirely, and
+// leaves ToggleMaximize's own use of the bit untouched.
 func (w *window) Zoom() {
-	// A window carrying NSWindowCollectionBehaviorFullScreenPrimary — which
-	// New sets, so that the green button enters full screen — answers zoom: by
-	// going full screen, which is the one thing this method exists to avoid.
-	// The bit is lifted for the call and put straight back, leaving
-	// ToggleMaximize unaffected.
-	behavior := objc.MsgSend0u(w.nswin, selCollectionBehavior)
-	objc.MsgSend1iVoid(w.nswin, selSetCollectionBehavior,
-		int64(behavior&^nsWindowCollectionBehaviorFullScreenPrimary))
-	objc.MsgSend1pVoid(w.nswin, selZoom, nil)
-	objc.MsgSend1iVoid(w.nswin, selSetCollectionBehavior, int64(behavior))
+	if w.IsZoomed() {
+		if w.preZoom != (objc.Rect{}) {
+			objc.SetFrame(w.nswin, selSetFrameDisplay, w.preZoom, 1)
+		}
+		return
+	}
+	screen := objc.MsgSend0(w.nswin, selScreen)
+	if screen == nil {
+		screen = objc.MsgSend0(objc.GetClass("NSScreen"), selMainScreen)
+	}
+	if screen == nil {
+		return
+	}
+	w.preZoom = objc.MsgSend0Rect(w.nswin, selFrame)
+	objc.SetFrame(w.nswin, selSetFrameDisplay, objc.MsgSend0Rect(screen, selVisibleFrame), 1)
 }
 
 // IsZoomed reports whether the window is zoomed. It answers for the window
