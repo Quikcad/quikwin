@@ -6,11 +6,14 @@
 // reports back. It stays open until the window is closed — nothing is on a
 // timer, so there is time to look.
 //
-// The case it exists for is Escape. Native full screen binds Escape to leaving
-// it, so an application maximised that way never sees the key. A zoomed window
-// does not, so the window opens zoomed: press Escape and the line prints while
-// the window stays exactly where it is. Press F for full screen and press it
-// again there to watch the difference.
+// The case it exists for is Escape. AppKit binds it to leaving full screen, so
+// an application maximised that way never used to see the key; quikwin takes
+// that binding back. Press Escape zoomed or full screen and the line prints
+// while the window stays exactly where it is.
+//
+// The window opens zoomed, which is the state that shows what Zoom is for: the
+// menu bar and titlebar are still there. Press F to compare against full
+// screen, and F again to come back.
 package main
 
 import (
@@ -67,8 +70,9 @@ func main() {
 		}
 		switch key {
 		case window.KeyEscape:
-			// The whole point: this line prints, and nothing else happens.
-			report("ESCAPE — window stays as it is")
+			// The whole point: this line prints, and nothing else happens —
+			// zoomed or full screen alike.
+			report("ESCAPE reached the app")
 		case window.KeyZ:
 			if !ok {
 				return
@@ -114,6 +118,6 @@ const usage = `
   Z    zoom / restore   — fills the screen, stays a window
   F    full screen      — the green button's plain click
   M    minimize
-  Esc  should print a line and change nothing
+  Esc  reaches the app; the window should not move, in either state
   Q    quit
 `
