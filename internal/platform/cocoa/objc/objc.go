@@ -66,6 +66,7 @@ var (
 	cifPoolPush      types.CallInterface // () → void*
 	cifPoolPop       types.CallInterface // (void*) → void
 	cifMsg0Rect      types.CallInterface // (id, SEL) → NSRect  (struct{f64, f64, f64, f64})
+	cifSetFrame      types.CallInterface // setFrame:display:
 )
 
 // Point mirrors NSPoint/CGPoint: two CGFloats laid out as { X, Y }. Used to
@@ -227,6 +228,8 @@ func prepareCIFs() error {
 		// (cls, sel, type u64, NSPoint as 2 f64, flags u64, timestamp f64,
 		// windowNumber i64, context id, subtype i16, data1 i64, data2 i64) → id
 		{&cifOtherEvent, tPtr, []*types.TypeDescriptor{tPtr, tPtr, tU64, tF64, tF64, tU64, tF64, tI64, tPtr, tI16, tI64, tI64}},
+		// (id, SEL, NSRect as 4 f64, display BOOL) → void
+		{&cifSetFrame, tVoid, []*types.TypeDescriptor{tPtr, tPtr, tF64, tF64, tF64, tF64, tI32}},
 		{&cifPoolPush, tPtr, []*types.TypeDescriptor{}},
 		{&cifPoolPop, tVoid, []*types.TypeDescriptor{tPtr}},
 	} {
@@ -475,4 +478,13 @@ func PoolPush() unsafe.Pointer {
 // PoolPop wraps objc_autoreleasePoolPop.
 func PoolPop(token unsafe.Pointer) {
 	ffi.CallFunction(&cifPoolPop, fpPoolPop, nil, []unsafe.Pointer{unsafe.Pointer(&token)})
+}
+
+// SetFrame wraps -[NSWindow setFrame:display:]. The NSRect is passed as its
+// four CGFloats, which lands in the same argument registers the struct would.
+func SetFrame(recv, sel unsafe.Pointer, r Rect, display int32) {
+	ffi.CallFunction(&cifSetFrame, fpObjCMsgSend, nil,
+		[]unsafe.Pointer{unsafe.Pointer(&recv), unsafe.Pointer(&sel),
+			unsafe.Pointer(&r.X), unsafe.Pointer(&r.Y), unsafe.Pointer(&r.W), unsafe.Pointer(&r.H),
+			unsafe.Pointer(&display)})
 }
