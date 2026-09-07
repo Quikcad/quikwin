@@ -259,6 +259,19 @@ func initWindowClass() {
 			func(_self, _cmd uintptr) bool { return true })
 		objc.AddMethod(quikwinWindowClass, "canBecomeMainWindow", "c@:",
 			func(_self, _cmd uintptr) bool { return true })
+		// AppKit binds Escape to leaving full screen, through
+		// cancelOperation:, which is why an application maximised that way
+		// never sees the key. Swallowing it gives Escape back: the key still
+		// reaches OnKey, and the window stays where it is.
+		//
+		// Full screen is still left by the green button, which AppKit reveals
+		// with the menu bar when the pointer goes to the top of the screen, and
+		// by the application's own ToggleMaximize. Control-Command-F works too
+		// where the application installs a menu bar, since AppKit puts Enter
+		// Full Screen in a View menu; an application with no menu bar has the
+		// first two. Only the Escape shortcut goes.
+		objc.AddMethod(quikwinWindowClass, "cancelOperation:", "v@:@",
+			func(_self, _cmd, _sender uintptr) {})
 		objc.RegisterClassPair(quikwinWindowClass)
 	})
 }
@@ -1025,9 +1038,12 @@ func (w *window) IsMaximized() bool {
 // it is what an application's own maximise control usually means.
 //
 // It differs from ToggleMaximize in what it leaves alone: the system menu bar
-// and the titlebar stay, and AppKit does not claim the Escape key, which in
-// full screen is bound to leaving it and is therefore unavailable to the
-// application for as long as the window is maximised.
+// and the titlebar stay, and the window stays in the current Space rather than
+// animating into one of its own.
+//
+// Escape is the application's in either state — initWindowClass takes the key
+// back from AppKit's full-screen binding — so that is no longer what chooses
+// between them.
 //
 // The frame is set directly rather than by sending zoom:. New sets
 // NSWindowCollectionBehaviorFullScreenPrimary so that the green button enters
