@@ -41,3 +41,9 @@ tasks:
     deps: [shaders]
     cmds:
       - CGO_ENABLED={{.CGO_ENABLED}} go run ./cmd/triangletest
+
+  window-state-test:
+    desc: "Open a window and drive its states from the keyboard (Z zoom, F full screen, Esc)"
+    deps: [build]
+    cmds:
+      - CGO_ENABLED={{.CGO_ENABLED}} go run ./cmd/windowstatetest
