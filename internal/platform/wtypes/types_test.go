@@ -28,6 +28,28 @@ func TestDetectEdge(t *testing.T) {
 	}
 }
 
+// A negative side would claim a window larger than the surface it is painted
+// in. xdg_surface rejects a geometry that does not intersect its surface and
+// the protocol error takes the connection with it, so caller arithmetic that
+// has gone wrong has to stop here rather than on the wire.
+func TestANegativeInsetIsNoInset(t *testing.T) {
+	got := FrameInset{Left: -4, Top: 19, Right: -0.5, Bottom: 22}.Normalized()
+	want := FrameInset{Left: 0, Top: 19, Right: 0, Bottom: 22}
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestAnInsetTakesBothSidesOffEachAxis(t *testing.T) {
+	in := FrameInset{Left: 4, Top: 2, Right: 8, Bottom: 16}
+	if got := in.Horizontal(); got != 12 {
+		t.Errorf("horizontal is %v, want 12", got)
+	}
+	if got := in.Vertical(); got != 18 {
+		t.Errorf("vertical is %v, want 18", got)
+	}
+}
+
 func TestEdgeCursorShape(t *testing.T) {
 	tests := []struct {
 		edge ResizeEdge

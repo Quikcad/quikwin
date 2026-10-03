@@ -160,6 +160,57 @@ const (
 	HitTestDrag
 )
 
+// FrameInset is how far the window a user sees is inset from the surface the
+// client paints, in logical pixels on each side.
+//
+// A client that draws its own drop shadow paints a surface larger than its
+// window and puts the shadow in the margin. Nothing can tell the two apart from
+// the outside: the compositor snaps, tiles and maximizes to the surface, so the
+// window comes to rest a shadow's width away from the screen edge it was
+// dragged to, and the resize border sits out where the shadow fades rather than
+// on the window's own edge.
+//
+// Four sides rather than one number because a dropped shadow is not centred —
+// it reaches further below the window than above it — and the margin that
+// clears it is not the same on every side.
+type FrameInset struct {
+	Left   float64
+	Top    float64
+	Right  float64
+	Bottom float64
+}
+
+// MakeFrameInset returns an inset of the same width on all four sides.
+func MakeFrameInset(all float64) FrameInset {
+	return FrameInset{
+		Left:   all,
+		Top:    all,
+		Right:  all,
+		Bottom: all,
+	}
+}
+
+// Horizontal is what the inset takes off the width.
+func (f FrameInset) Horizontal() float64 { return f.Left + f.Right }
+
+// Vertical is what the inset takes off the height.
+func (f FrameInset) Vertical() float64 { return f.Top + f.Bottom }
+
+// Normalized is the inset with negative sides dropped to zero.
+//
+// A negative inset would claim a window larger than the surface it is painted
+// in, which is a caller's arithmetic going wrong rather than a thing to pass to
+// a compositor — xdg_surface rejects a geometry that does not intersect the
+// surface, and the protocol error takes the connection with it.
+func (f FrameInset) Normalized() FrameInset {
+	return FrameInset{
+		Left:   max(f.Left, 0),
+		Top:    max(f.Top, 0),
+		Right:  max(f.Right, 0),
+		Bottom: max(f.Bottom, 0),
+	}
+}
+
 // ResizeEdge identifies which edge(s) the cursor is near. Values match
 // the xdg_toplevel resize_edge enum so Wayland can cast directly.
 type ResizeEdge uint32

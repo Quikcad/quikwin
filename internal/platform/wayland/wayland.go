@@ -5,6 +5,7 @@ package wayland
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -87,20 +88,43 @@ type window struct {
 	pendingSerial uint32
 	configured    bool
 
-	width, height       uint32
-	minWidth, minHeight uint32
-	resizePending       bool // a configure changed the size this poll cycle (guarded by mu)
-	appID               string
+	width, height uint32
+	// minGeomW/minGeomH is the smallest window, not the smallest surface: the
+	// caller's minimum with the frame inset already taken off. Converted on the
+	// way in rather than on the way out, because the inset stops applying the
+	// moment the window is maximized, and a minimum re-derived under the new
+	// state would be the caller's less a margin that is no longer there.
+	minGeomW, minGeomH uint32
+	resizePending      bool // a configure changed the size this poll cycle (guarded by mu)
+	appID              string
+
+	// inset is what the client declared through SetFrameInset, and geomW/geomH
+	// the window geometry the compositor last configured.
+	//
+	// Both, because the surface is the geometry plus the inset and either can
+	// move on its own. An inset that changes has to be re-applied to the size
+	// the compositor asked for; adding the new one to a width that already
+	// carries the old is how a window grows by a margin every time the shadow
+	// is turned off and on again.
+	//
+	// geomConfigured tells "the compositor has not sized us yet" from "it sized
+	// us at zero". Until the first configure carries a size, width and height
+	// are what the caller asked for and there is no geometry to derive them
+	// from.
+	inset          wtypes.FrameInset
+	geomW, geomH   uint32
+	geomConfigured bool
 
 	ptrX, ptrY   float64
 	ptrSerial    uint32
 	cursorSerial uint32
 
-	resizable bool
-	decorated bool
-	dragging  bool
-	maximized bool
-	tiled     bool
+	resizable  bool
+	decorated  bool
+	dragging   bool
+	maximized  bool
+	tiled      bool
+	fullscreen bool
 
 	pendingMinimize       bool
 	pendingToggleMaximize bool
@@ -127,7 +151,15 @@ type window struct {
 	onCursorEnter func(float64, float64)
 
 	cursorHidden bool
-	cursorShape  wtypes.CursorShape
+	// cursorShape is what the application asked for and shownCursor what the
+	// compositor was last told. The two differ while the resize border is under
+	// the pointer, which is the only thing that overrides the application — and
+	// keeping both is what lets the override be taken back again. cursorSet
+	// says whether shownCursor means anything yet: nothing has been sent before
+	// the first pointer enter, and a hidden cursor is not a shape.
+	cursorShape wtypes.CursorShape
+	shownCursor wtypes.CursorShape
+	cursorSet   bool
 
 	shouldClose bool
 	destroyed   bool
@@ -159,8 +191,8 @@ func New(cfg *wtypes.Config) (*window, error) {
 		conn:      conn,
 		width:     cfg.Width,
 		height:    cfg.Height,
-		minWidth:  cfg.MinWidth,
-		minHeight: cfg.MinHeight,
+		minGeomW:  cfg.MinWidth,
+		minGeomH:  cfg.MinHeight,
 		resizable: cfg.Resizable,
 		decorated: cfg.Border && cfg.Titlebar,
 		globals:   make(map[string]globalEntry),
@@ -316,28 +348,46 @@ func (w *window) HandleSurfaceConfigure(e xdg.SurfaceConfigureEvent) {
 
 // --- xdg_toplevel events ---
 
+// HandleToplevelConfigure takes the compositor's new size and states.
+//
+// The size is in window geometry, which is the surface less the frame inset —
+// so it is kept as the geometry it is and the surface derived from it. The
+// states come first because they decide whether the inset applies at all: a
+// window that has just been maximized has no margin, and the size in this very
+// event is the one it has to be read with.
 func (w *window) HandleToplevelConfigure(e xdg.ToplevelConfigureEvent) {
 	maximized := statesContain(e.States, xdg.ToplevelStateMaximized)
+	fullscreen := statesContain(e.States, xdg.ToplevelStateFullscreen)
 	tiled := statesContainAny(e.States,
 		xdg.ToplevelStateTiledLeft,
 		xdg.ToplevelStateTiledRight,
 		xdg.ToplevelStateTiledTop,
 		xdg.ToplevelStateTiledBottom,
 	)
+
 	w.mu.Lock()
+	framed := w.effectiveInset()
 	w.maximized = maximized
 	w.tiled = tiled
+	w.fullscreen = fullscreen
+	if e.Width > 0 && e.Height > 0 {
+		w.geomW, w.geomH = uint32(e.Width), uint32(e.Height)
+		w.geomConfigured = true
+	}
+	sizeChanged := w.syncSurfaceSizeLocked()
+	insetChanged := w.effectiveInset() != framed
 	w.mu.Unlock()
-	if e.Width <= 0 || e.Height <= 0 {
+
+	if !sizeChanged && !insetChanged {
 		return
 	}
-	nw, nh := uint32(e.Width), uint32(e.Height)
-	w.mu.Lock()
-	if nw != w.width || nh != w.height {
-		w.width, w.height = nw, nh
-		w.resizePending = true
-	}
-	w.mu.Unlock()
+	w.applyWindowGeometry()
+	// The maximum that pins a non-resizable window is the current size, and the
+	// minimum is in window geometry — so what both have to be sent as moves with
+	// the size and with the inset, and the inset stops applying the moment the
+	// window is maximized with nothing else to notice.
+	w.applySizeLimits()
+	wl.Flush(w.conn)
 }
 
 func (w *window) HandleToplevelClose(e xdg.ToplevelCloseEvent) {
@@ -550,10 +600,20 @@ func (w *window) HandlePointerEnter(e wayland.PointerEnterEvent) {
 	if fn := w.onCursorEnter; fn != nil {
 		fn(x, y)
 	}
-	w.applyEdgeCursor(x, y, e.Serial)
+	w.refreshCursor(x, y, e.Serial)
 }
 
-func (w *window) HandlePointerLeave(e wayland.PointerLeaveEvent) {}
+// HandlePointerLeave forgets what the compositor was told.
+//
+// The cursor belongs to whoever the pointer is over, so once it has left this
+// surface the shape is somebody else's and what we last set is not what is
+// showing. Remembering it would make the next enter a no-op — the pointer would
+// come back carrying the last client's cursor.
+func (w *window) HandlePointerLeave(e wayland.PointerLeaveEvent) {
+	w.mu.Lock()
+	w.cursorSet = false
+	w.mu.Unlock()
+}
 
 func (w *window) HandlePointerMotion(e wayland.PointerMotionEvent) {
 	x := wlFixedToFloat(e.SurfaceX)
@@ -571,21 +631,63 @@ func (w *window) HandlePointerMotion(e wayland.PointerMotionEvent) {
 	if fn := w.onMouseMove; fn != nil {
 		fn(x, y)
 	}
-	w.applyEdgeCursor(x, y, serial)
+	w.refreshCursor(x, y, serial)
 }
 
-// applyEdgeCursor shows the matching resize cursor when the pointer is over an
-// undecorated window's invisible resize border.
-func (w *window) applyEdgeCursor(x, y float64, serial uint32) {
-	if w.decorated || !w.resizable || w.cursorDev == nil {
+// refreshCursor keeps the pointer's shape in step with where the pointer is:
+// the matching resize cursor over an undecorated window's invisible resize
+// border, and the application's own everywhere else.
+//
+// **R.** The resize cursor stuck. The version this replaces set a shape when the
+// pointer was on the border and did nothing at all when it was not, so nothing
+// ever took the resize arrow back. And because it wrote past the application's
+// choice without recording it, the application could not take it back either:
+// quikgui calls SetCursor only when *its* answer changes, and its answer had not
+// changed — so the arrow stayed until the pointer happened to cross a widget
+// that wanted a different one.
+//
+// So the border is an override with a withdrawal, and one place decides what is
+// showing. Called from every pointer enter and motion, and it sends only on a
+// change, which is the per-motion call the old early return was there to avoid.
+func (w *window) refreshCursor(x, y float64, serial uint32) {
+	w.mu.Lock()
+	shape := w.cursorForLocked(x, y)
+	send := w.claimCursorLocked(shape)
+	w.mu.Unlock()
+	if !send {
 		return
 	}
-	edge := wtypes.DetectEdge(x, y, float64(w.width), float64(w.height), wtypes.BorderWidth)
-	if edge == wtypes.EdgeNone {
-		return
-	}
-	w.cursorDev.SetShape(serial, cursorShapeMap(wtypes.EdgeCursorShape(edge)))
+	w.cursorDev.SetShape(serial, cursorShapeMap(shape))
 	wl.Flush(w.conn)
+}
+
+// cursorForLocked is the shape the pointer should have at (x, y): the resize
+// border's where there is one, and the application's everywhere else. Call with
+// mu held.
+//
+// The border wins over the application, because the application is answering
+// about the widget under the pointer and over the border the pointer is not
+// there to use the widget.
+func (w *window) cursorForLocked(x, y float64) wtypes.CursorShape {
+	if !w.decorated && w.resizable {
+		if edge := w.detectEdgeLocked(x, y); edge != wtypes.EdgeNone {
+			return wtypes.EdgeCursorShape(edge)
+		}
+	}
+	return w.cursorShape
+}
+
+// claimCursorLocked records that the compositor is about to be told shape, and
+// reports whether it needs telling. Call with mu held.
+func (w *window) claimCursorLocked(shape wtypes.CursorShape) bool {
+	if w.cursorDev == nil || w.cursorHidden {
+		return false
+	}
+	if w.cursorSet && w.shownCursor == shape {
+		return false
+	}
+	w.shownCursor, w.cursorSet = shape, true
+	return true
 }
 
 func (w *window) HandlePointerButton(e wayland.PointerButtonEvent) {
@@ -613,7 +715,7 @@ func (w *window) HandlePointerButton(e wayland.PointerButtonEvent) {
 	}
 	if action == wtypes.Press && b == wtypes.ButtonLeft {
 		if !w.decorated && w.resizable {
-			edge := wtypes.DetectEdge(w.ptrX, w.ptrY, float64(w.width), float64(w.height), wtypes.BorderWidth)
+			edge := w.detectEdge(w.ptrX, w.ptrY)
 			if edge != wtypes.EdgeNone {
 				w.xdgToplevel.Resize(w.seat, e.Serial, xdg.ToplevelResizeEdge(edge))
 				return
@@ -667,6 +769,143 @@ func (w *window) IsTiled() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.tiled
+}
+
+func (w *window) IsFullscreen() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.fullscreen
+}
+
+// --- frame inset: the margin a client paints its shadow in ---
+
+func (w *window) SetFrameInset(inset wtypes.FrameInset) {
+	inset = inset.Normalized()
+
+	w.mu.Lock()
+	if inset == w.inset {
+		w.mu.Unlock()
+		return
+	}
+	w.inset = inset
+	w.syncSurfaceSizeLocked()
+	w.mu.Unlock()
+
+	w.applyWindowGeometry()
+	w.applySizeLimits()
+	wl.Flush(w.conn)
+}
+
+// effectiveInset is the declared inset where it applies and nothing where it
+// does not. Call with mu held.
+//
+// A maximized, tiled or fullscreen window sits flush against a screen edge. The
+// margin would be painted into space the compositor has given to something
+// else, so a client does not paint it there and the geometry must not claim it.
+func (w *window) effectiveInset() wtypes.FrameInset {
+	if w.maximized || w.tiled || w.fullscreen {
+		return wtypes.FrameInset{}
+	}
+	return w.inset
+}
+
+// insetPixels is the inset rounded to whole pixels, which is what xdg-shell's
+// geometry is measured in.
+func insetPixels(in wtypes.FrameInset) (l, t, r, b int32) {
+	return int32(math.Round(in.Left)), int32(math.Round(in.Top)),
+		int32(math.Round(in.Right)), int32(math.Round(in.Bottom))
+}
+
+// syncSurfaceSizeLocked recomputes the surface from the window geometry the
+// compositor configured and the margin painted around it, and reports whether
+// it moved. Call with mu held.
+//
+// Before the first configure that carried a size there is no geometry to derive
+// anything from, and width and height are the size the caller asked for.
+func (w *window) syncSurfaceSizeLocked() bool {
+	if !w.geomConfigured {
+		return false
+	}
+	l, t, r, b := insetPixels(w.effectiveInset())
+	nw := uint32(int32(w.geomW) + l + r)
+	nh := uint32(int32(w.geomH) + t + b)
+	if nw == w.width && nh == w.height {
+		return false
+	}
+	w.width, w.height = nw, nh
+	w.resizePending = true
+	return true
+}
+
+// applyWindowGeometry tells the compositor which part of the surface is the
+// window. Everything outside it is margin, and the compositor leaves it out of
+// snapping, tiling, maximizing and its own idea of where the window's edges are.
+//
+// A geometry that does not intersect the surface is a protocol error, so a
+// margin wider than the window it surrounds is dropped rather than sent.
+func (w *window) applyWindowGeometry() {
+	if w.xdgSurface == nil {
+		return
+	}
+	w.mu.Lock()
+	l, t, r, b := insetPixels(w.effectiveInset())
+	gw := int32(w.width) - l - r
+	gh := int32(w.height) - t - b
+	w.mu.Unlock()
+
+	if gw < 1 || gh < 1 {
+		return
+	}
+	w.xdgSurface.SetWindowGeometry(l, t, gw, gh)
+}
+
+// applySizeLimits sends the size bounds in the coordinates xdg-shell measures
+// them in, which is window geometry rather than the surface the caller paints.
+//
+// The minimum is already in those coordinates; see minGeomW. The maximum is
+// not, because the only maximum this sends is the current size pinned to stop a
+// window being resizable at all, and the current size moves.
+func (w *window) applySizeLimits() {
+	if w.xdgToplevel == nil {
+		return
+	}
+	w.mu.Lock()
+	l, t, r, b := insetPixels(w.effectiveInset())
+	minW, minH := int32(w.minGeomW), int32(w.minGeomH)
+	maxW, maxH := int32(w.width)-l-r, int32(w.height)-t-b
+	resizable := w.resizable
+	w.mu.Unlock()
+
+	w.xdgToplevel.SetMinSize(max(minW, 0), max(minH, 0))
+	// Wayland has no resizable flag; a maximum pinned to the current size is
+	// how the compositor is told not to offer a handle. See New.
+	if !resizable {
+		w.xdgToplevel.SetMaxSize(max(maxW, 0), max(maxH, 0))
+	}
+}
+
+// detectEdgeLocked is [wtypes.DetectEdge] against the window rather than the
+// surface. Call with mu held.
+//
+// The resize border belongs on the window's edge. Measured against the surface
+// it sits out where a client-drawn shadow fades away, with a dead strip the
+// pointer crosses on the way in — which is the whole of what the margin looks
+// like from outside. A point in the margin maps to a negative coordinate and so
+// still reads as the edge nearest it: the shadow is grabbable, which is what a
+// user aiming at the corner of a window expects.
+func (w *window) detectEdgeLocked(x, y float64) wtypes.ResizeEdge {
+	in := w.effectiveInset()
+	return wtypes.DetectEdge(
+		x-in.Left, y-in.Top,
+		float64(w.width)-in.Horizontal(), float64(w.height)-in.Vertical(),
+		wtypes.BorderWidth,
+	)
+}
+
+func (w *window) detectEdge(x, y float64) wtypes.ResizeEdge {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.detectEdgeLocked(x, y)
 }
 
 // ClientDecorated reports whether the window draws its own decorations, which
@@ -805,22 +1044,28 @@ func (w *window) applyPending() bool {
 	return did
 }
 
+// SetCursor records what the application wants and shows it, unless the pointer
+// is on the resize border — see cursorForLocked.
 func (w *window) SetCursor(shape wtypes.CursorShape) {
 	w.mu.Lock()
 	w.cursorShape = shape
-	hidden := w.cursorHidden
+	eff := w.cursorForLocked(w.ptrX, w.ptrY)
+	send := w.claimCursorLocked(eff)
 	serial := w.cursorSerial
 	w.mu.Unlock()
-	if hidden || w.cursorDev == nil {
+	if !send {
 		return
 	}
-	w.cursorDev.SetShape(serial, cursorShapeMap(shape))
+	w.cursorDev.SetShape(serial, cursorShapeMap(eff))
 	wl.Flush(w.conn)
 }
 
 func (w *window) HideCursor() {
 	w.mu.Lock()
 	w.cursorHidden = true
+	// A hidden pointer is not a shape the compositor is holding, so there is
+	// nothing for the next claim to match against.
+	w.cursorSet = false
 	serial := w.cursorSerial
 	w.mu.Unlock()
 	if w.pointer == nil {
@@ -833,22 +1078,27 @@ func (w *window) HideCursor() {
 func (w *window) ShowCursor() {
 	w.mu.Lock()
 	w.cursorHidden = false
+	shape := w.cursorForLocked(w.ptrX, w.ptrY)
+	send := w.claimCursorLocked(shape)
 	serial := w.cursorSerial
-	shape := w.cursorShape
 	w.mu.Unlock()
-	if w.cursorDev == nil {
+	if !send {
 		return
 	}
 	w.cursorDev.SetShape(serial, cursorShapeMap(shape))
 	wl.Flush(w.conn)
 }
 
+// SetMinSize takes the smallest surface the caller can paint, and keeps the
+// smallest window inside it: the caller's number less the margin in force when
+// the caller worked it out. See minGeomW.
 func (w *window) SetMinSize(mw, mh uint32) {
 	w.mu.Lock()
-	w.minWidth = mw
-	w.minHeight = mh
+	l, t, r, b := insetPixels(w.effectiveInset())
+	w.minGeomW = uint32(max(int32(mw)-l-r, 0))
+	w.minGeomH = uint32(max(int32(mh)-t-b, 0))
 	w.mu.Unlock()
-	w.xdgToplevel.SetMinSize(int32(mw), int32(mh))
+	w.applySizeLimits()
 	w.surface.Commit()
 	wl.Flush(w.conn)
 }

@@ -181,8 +181,18 @@ type window struct {
 	onCursorEnter func(float64, float64)
 
 	cursorHidden bool
-	cursorShape  wtypes.CursorShape
-	blankCursor  uint64
+	// cursorShape is what the application asked for and shownCursor what the
+	// server was last told. The two differ while the resize border is under the
+	// pointer, which is the only thing that overrides the application — and
+	// keeping both is what lets the override be taken back again. cursorSet says
+	// whether shownCursor means anything yet.
+	cursorShape wtypes.CursorShape
+	shownCursor wtypes.CursorShape
+	cursorSet   bool
+	// ptrX/ptrY is where the pointer was last seen, so SetCursor can tell
+	// whether the border is overriding the shape it was handed.
+	ptrX, ptrY  float64
+	blankCursor uint64
 
 	clipText string // in-process clipboard fallback (see clipboard.go)
 
@@ -470,16 +480,71 @@ func (w *window) SetTitle(title string) {
 	xFlush(w.dpy)
 }
 
+// SetCursor records what the application wants and shows it, unless the pointer
+// is on the resize border — see cursorForLocked.
 func (w *window) SetCursor(shape wtypes.CursorShape) {
 	w.mu.Lock()
 	w.cursorShape = shape
-	hidden := w.cursorHidden
+	eff := w.cursorForLocked(w.ptrX, w.ptrY)
+	send := w.claimCursorLocked(eff)
 	w.mu.Unlock()
-	if hidden {
+	if !send {
 		return
 	}
-	id := xfontCursorID(shape)
-	cursor := xCreateFontCursor(w.dpy, id)
+	w.showCursorShape(eff)
+}
+
+// refreshCursor keeps the pointer's shape in step with where the pointer is:
+// the matching resize cursor over an undecorated window's invisible resize
+// border, and the application's own everywhere else.
+//
+// The border used to be shown by calling SetCursor, which is the *application's*
+// setter — so the resize arrow became what the application had asked for and
+// there was nothing left to go back to, and nothing took it back. See the
+// Wayland backend's refreshCursor for the rest of what that looked like.
+func (w *window) refreshCursor(x, y float64) {
+	w.mu.Lock()
+	w.ptrX, w.ptrY = x, y
+	shape := w.cursorForLocked(x, y)
+	send := w.claimCursorLocked(shape)
+	w.mu.Unlock()
+	if !send {
+		return
+	}
+	w.showCursorShape(shape)
+}
+
+// cursorForLocked is the shape the pointer should have at (x, y): the resize
+// border's where there is one, and the application's everywhere else. Call with
+// mu held.
+func (w *window) cursorForLocked(x, y float64) wtypes.CursorShape {
+	if !w.decorated && w.resizable {
+		edge := wtypes.DetectEdge(x, y, float64(w.width), float64(w.height), wtypes.BorderWidth)
+		if edge != wtypes.EdgeNone {
+			return wtypes.EdgeCursorShape(edge)
+		}
+	}
+	return w.cursorShape
+}
+
+// claimCursorLocked records that the server is about to be told shape, and
+// reports whether it needs telling. Call with mu held.
+//
+// Only on a change: every show allocates a font cursor on the server, and this
+// runs on every motion event.
+func (w *window) claimCursorLocked(shape wtypes.CursorShape) bool {
+	if w.cursorHidden {
+		return false
+	}
+	if w.cursorSet && w.shownCursor == shape {
+		return false
+	}
+	w.shownCursor, w.cursorSet = shape, true
+	return true
+}
+
+func (w *window) showCursorShape(shape wtypes.CursorShape) {
+	cursor := xCreateFontCursor(w.dpy, xfontCursorID(shape))
 	xDefineCursor(w.dpy, w.win, cursor)
 	xFlush(w.dpy)
 }
@@ -487,6 +552,9 @@ func (w *window) SetCursor(shape wtypes.CursorShape) {
 func (w *window) HideCursor() {
 	w.mu.Lock()
 	w.cursorHidden = true
+	// A hidden pointer is not a shape the server is holding, so there is
+	// nothing for the next claim to match against.
+	w.cursorSet = false
 	w.mu.Unlock()
 	w.ensureBlankCursor()
 	xDefineCursor(w.dpy, w.win, w.blankCursor)
@@ -496,12 +564,13 @@ func (w *window) HideCursor() {
 func (w *window) ShowCursor() {
 	w.mu.Lock()
 	w.cursorHidden = false
-	shape := w.cursorShape
+	shape := w.cursorForLocked(w.ptrX, w.ptrY)
+	send := w.claimCursorLocked(shape)
 	w.mu.Unlock()
-	id := xfontCursorID(shape)
-	cursor := xCreateFontCursor(w.dpy, id)
-	xDefineCursor(w.dpy, w.win, cursor)
-	xFlush(w.dpy)
+	if !send {
+		return
+	}
+	w.showCursorShape(shape)
 }
 
 func (w *window) ensureBlankCursor() {
@@ -754,12 +823,7 @@ func (w *window) processEvent(ev *xEvent) {
 		if fn := w.onCursorEnter; fn != nil {
 			fn(x, y)
 		}
-		if !w.decorated && w.resizable {
-			edge := wtypes.DetectEdge(x, y, float64(w.width), float64(w.height), wtypes.BorderWidth)
-			if edge != wtypes.EdgeNone {
-				w.SetCursor(wtypes.EdgeCursorShape(edge))
-			}
-		}
+		w.refreshCursor(x, y)
 
 	case evButtonPress:
 		btn := ev.btnButton()
@@ -848,12 +912,7 @@ func (w *window) processEvent(ev *xEvent) {
 			if fn := w.onMouseMove; fn != nil {
 				fn(x, y)
 			}
-			if !w.decorated && w.resizable {
-				edge := wtypes.DetectEdge(x, y, float64(w.width), float64(w.height), wtypes.BorderWidth)
-				if edge != wtypes.EdgeNone {
-					w.SetCursor(wtypes.EdgeCursorShape(edge))
-				}
-			}
+			w.refreshCursor(x, y)
 		}
 
 	case evFocusIn:

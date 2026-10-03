@@ -9,7 +9,11 @@ type (
 	Button        = wtypes.Button
 	CursorShape   = wtypes.CursorShape
 	HitTestResult = wtypes.HitTestResult
+	FrameInset    = wtypes.FrameInset
 )
+
+// MakeFrameInset returns an inset of the same width on all four sides.
+func MakeFrameInset(all float64) FrameInset { return wtypes.MakeFrameInset(all) }
 
 const (
 	KeyUnknown      = wtypes.KeyUnknown
