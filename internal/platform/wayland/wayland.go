@@ -89,14 +89,19 @@ type window struct {
 	configured    bool
 
 	width, height uint32
-	// minGeomW/minGeomH is the smallest window, not the smallest surface: the
-	// caller's minimum with the frame inset already taken off. Converted on the
-	// way in rather than on the way out, because the inset stops applying the
-	// moment the window is maximized, and a minimum re-derived under the new
-	// state would be the caller's less a margin that is no longer there.
-	minGeomW, minGeomH uint32
-	resizePending      bool // a configure changed the size this poll cycle (guarded by mu)
-	appID              string
+	// The size bounds, in the surface coordinates the caller gave them in. What
+	// xdg-shell is told is these less the frame inset; see applySizeLimits.
+	//
+	// maxWidth/maxHeight is the size a window that refuses to be resized is
+	// pinned at, and zero where there is no maximum. It is the size the window
+	// was *created* at and does not move: derived instead from the current size,
+	// it follows the compositor down on a configure while the minimum stays put,
+	// and the two cross — which is a protocol error that takes the connection
+	// and every surface on it.
+	minWidth, minHeight uint32
+	maxWidth, maxHeight uint32
+	resizePending       bool // a configure changed the size this poll cycle (guarded by mu)
+	appID               string
 
 	// inset is what the client declared through SetFrameInset, and geomW/geomH
 	// the window geometry the compositor last configured.
@@ -191,8 +196,8 @@ func New(cfg *wtypes.Config) (*window, error) {
 		conn:      conn,
 		width:     cfg.Width,
 		height:    cfg.Height,
-		minGeomW:  cfg.MinWidth,
-		minGeomH:  cfg.MinHeight,
+		minWidth:  cfg.MinWidth,
+		minHeight: cfg.MinHeight,
 		resizable: cfg.Resizable,
 		decorated: cfg.Border && cfg.Titlebar,
 		globals:   make(map[string]globalEntry),
@@ -236,15 +241,16 @@ func New(cfg *wtypes.Config) (*window, error) {
 	// taskbar entry — without one a minimized window can become unrecoverable.
 	w.appID = cfg.Title
 	w.xdgToplevel.SetAppID(cfg.Title)
-	if cfg.MinWidth > 0 || cfg.MinHeight > 0 {
-		w.xdgToplevel.SetMinSize(int32(cfg.MinWidth), int32(cfg.MinHeight))
-	}
-
-	// Wayland has no direct resizable flag. To prevent resizing, pin max_size
-	// to min_size so the compositor won't offer a resize handle.
+	// Wayland has no direct resizable flag. To prevent resizing, pin max_size to
+	// min_size so the compositor won't offer a resize handle. Both are kept
+	// rather than sent, because what the compositor is told is these less the
+	// frame inset and the inset is not declared yet; see applySizeLimits.
 	if !cfg.Resizable {
-		w.xdgToplevel.SetMaxSize(int32(cfg.Width), int32(cfg.Height))
-		w.xdgToplevel.SetMinSize(int32(cfg.Width), int32(cfg.Height))
+		w.minWidth, w.minHeight = cfg.Width, cfg.Height
+		w.maxWidth, w.maxHeight = cfg.Width, cfg.Height
+	}
+	if w.minWidth > 0 || w.minHeight > 0 || w.maxWidth > 0 {
+		w.applySizeLimits()
 	}
 
 	// Request client-side decorations when either border or titlebar is
@@ -862,25 +868,33 @@ func (w *window) applyWindowGeometry() {
 // applySizeLimits sends the size bounds in the coordinates xdg-shell measures
 // them in, which is window geometry rather than the surface the caller paints.
 //
-// The minimum is already in those coordinates; see minGeomW. The maximum is
-// not, because the only maximum this sends is the current size pinned to stop a
-// window being resizable at all, and the current size moves.
+// The two differ by the margin. Sending the surface minimum unadjusted reserves
+// the margin a second time, and the window stops shrinking a shadow's width
+// before it has to.
+//
+// A minimum above the maximum is a protocol error that takes the connection
+// with it, so the pair is reconciled here rather than forwarded. The caller is
+// describing a window that cannot exist; the compositor's answer to that is to
+// disconnect the process, which is not an answer a caller can act on.
 func (w *window) applySizeLimits() {
 	if w.xdgToplevel == nil {
 		return
 	}
 	w.mu.Lock()
 	l, t, r, b := insetPixels(w.effectiveInset())
-	minW, minH := int32(w.minGeomW), int32(w.minGeomH)
-	maxW, maxH := int32(w.width)-l-r, int32(w.height)-t-b
-	resizable := w.resizable
+	minW, minH := max(int32(w.minWidth)-l-r, 0), max(int32(w.minHeight)-t-b, 0)
+	maxW, maxH := max(int32(w.maxWidth)-l-r, 0), max(int32(w.maxHeight)-t-b, 0)
+	hasMax := w.maxWidth > 0 || w.maxHeight > 0
 	w.mu.Unlock()
 
-	w.xdgToplevel.SetMinSize(max(minW, 0), max(minH, 0))
-	// Wayland has no resizable flag; a maximum pinned to the current size is
-	// how the compositor is told not to offer a handle. See New.
-	if !resizable {
-		w.xdgToplevel.SetMaxSize(max(maxW, 0), max(maxH, 0))
+	if hasMax {
+		minW, minH = min(minW, maxW), min(minH, maxH)
+	}
+	w.xdgToplevel.SetMinSize(minW, minH)
+	// Wayland has no resizable flag; a maximum pinned to the size the window was
+	// made at is how the compositor is told not to offer a handle. See New.
+	if hasMax {
+		w.xdgToplevel.SetMaxSize(maxW, maxH)
 	}
 }
 
@@ -1089,14 +1103,12 @@ func (w *window) ShowCursor() {
 	wl.Flush(w.conn)
 }
 
-// SetMinSize takes the smallest surface the caller can paint, and keeps the
-// smallest window inside it: the caller's number less the margin in force when
-// the caller worked it out. See minGeomW.
+// SetMinSize takes the smallest surface the caller can paint. What reaches the
+// compositor is that less the frame inset; see applySizeLimits.
 func (w *window) SetMinSize(mw, mh uint32) {
 	w.mu.Lock()
-	l, t, r, b := insetPixels(w.effectiveInset())
-	w.minGeomW = uint32(max(int32(mw)-l-r, 0))
-	w.minGeomH = uint32(max(int32(mh)-t-b, 0))
+	w.minWidth = mw
+	w.minHeight = mh
 	w.mu.Unlock()
 	w.applySizeLimits()
 	w.surface.Commit()

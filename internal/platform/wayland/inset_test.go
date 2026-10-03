@@ -141,6 +141,87 @@ func TestTheResizeBorderFollowsTheMarginAway(t *testing.T) {
 	}
 }
 
+// sizeLimits is what applySizeLimits would send, without the toplevel to send
+// it on. The reconciliation is the part worth pinning and it is arithmetic.
+func sizeLimits(w *window) (minW, minH, maxW, maxH int32, hasMax bool) {
+	w.mu.Lock()
+	l, t, r, b := insetPixels(w.effectiveInset())
+	minW, minH = max(int32(w.minWidth)-l-r, 0), max(int32(w.minHeight)-t-b, 0)
+	maxW, maxH = max(int32(w.maxWidth)-l-r, 0), max(int32(w.maxHeight)-t-b, 0)
+	hasMax = w.maxWidth > 0 || w.maxHeight > 0
+	w.mu.Unlock()
+	if hasMax {
+		minW, minH = min(minW, maxW), min(minH, maxH)
+	}
+	return minW, minH, maxW, maxH, hasMax
+}
+
+// **R.** `xdg_toplevel#12: error 2: minimum width can't be bigger than the
+// maximum width`, and with it `ErrorSurfaceLostKHR` on every frame for the rest
+// of the run — a protocol error takes the connection, and the connection is
+// every surface the process has.
+//
+// A window that refuses to be resized is pinned by a maximum. Derived from the
+// *current* size, that maximum follows the compositor down on the next configure
+// while the minimum stays where the caller put it, and within one frame the two
+// have crossed. So the maximum is the size the window was made at and does not
+// move.
+func TestAPinnedMaximumDoesNotFollowTheWindowDown(t *testing.T) {
+	w := floating(19, 460, 300)
+	w.resizable = false
+	w.minWidth, w.minHeight = 498, 338
+	w.maxWidth, w.maxHeight = 498, 338
+
+	// The compositor comes back with less than was asked for.
+	w.geomW, w.geomH = 441, 281
+	w.syncSurfaceSizeLocked()
+
+	minW, minH, maxW, maxH, hasMax := sizeLimits(w)
+	if !hasMax {
+		t.Fatal("a window that refuses to resize has no maximum")
+	}
+	if minW > maxW || minH > maxH {
+		t.Errorf("min %dx%d is bigger than max %dx%d; the compositor disconnects "+
+			"the process for this", minW, minH, maxW, maxH)
+	}
+	if maxW != 460 || maxH != 300 {
+		t.Errorf("the maximum is %dx%d, want the 460x300 the window was made at",
+			maxW, maxH)
+	}
+}
+
+// And a caller whose own two numbers cross is reconciled rather than forwarded:
+// the compositor's answer to an impossible window is to disconnect the process,
+// which is not an answer a caller can act on.
+func TestAnImpossiblePairIsReconciledRatherThanSent(t *testing.T) {
+	w := floating(0, 400, 300)
+	w.resizable = false
+	w.minWidth, w.minHeight = 900, 700
+	w.maxWidth, w.maxHeight = 400, 300
+
+	minW, minH, maxW, maxH, _ := sizeLimits(w)
+	if minW > maxW || minH > maxH {
+		t.Errorf("min %dx%d was sent above max %dx%d", minW, minH, maxW, maxH)
+	}
+}
+
+// Both bounds are the caller's surface and both are told to the compositor as
+// window geometry, so the margin comes off each of them exactly once.
+func TestBothBoundsLoseTheMarginExactlyOnce(t *testing.T) {
+	w := floating(19, 800, 600)
+	w.resizable = false
+	w.minWidth, w.minHeight = 338, 238
+	w.maxWidth, w.maxHeight = 838, 638
+
+	minW, minH, maxW, maxH, _ := sizeLimits(w)
+	if minW != 300 || minH != 200 {
+		t.Errorf("the minimum is %dx%d, want 300x200", minW, minH)
+	}
+	if maxW != 800 || maxH != 600 {
+		t.Errorf("the maximum is %dx%d, want 800x600", maxW, maxH)
+	}
+}
+
 // An inset is rounded to whole pixels, because xdg-shell's geometry is whole
 // pixels. Rounding each side on its own is what keeps the two halves adding up
 // to what the surface arithmetic took off.
